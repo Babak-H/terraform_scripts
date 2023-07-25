@@ -1,4 +1,4 @@
-tf = terraform
+tf = terraform <br>
 lpprj = livePerson Project
 b2b = business model of project
 q = QA stage
