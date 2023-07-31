@@ -1,0 +1,22 @@
+// Packer => packer is used to create machine images (containing pre-configured software) that we can later use in virtualbox or ec2 machines (also Azure and GCP)
+// you can create one packer image and use it in several different cloud environments
+
+// user => create packer HCL files => put it in CI/CD pipeline => push it to AWS/AZURE/DOCKER/...
+
+// packer files look very similar to Terraform files. both use same language and formatting
+
+// go to packer.io to install packer
+
+// packer files end with "pkr.hcl"
+
+$ packer fmt .   // format the code
+
+$ packer validate .   // validate that the code is correct
+
+$ packer init .   // find and install all needed plugins
+
+$ packer build .   // build the image
+
+// if you re-run the same packer script, it will throw an error since the AMI already exists, we should either
+// come up with new name each time, or manually delete the running instance.
+
