@@ -13,13 +13,15 @@ terraform apply -auto-approve  # without need to approve
 terraform apply -replace aws_instance.dev_node.public_ip 
 # in case you have other var file instead of terraform.tfvars
 terraform apply -var-file="dev.tfvars"
-terraform apply -refresh-only # only apply new files and codes
+# only apply new files and codes
+terraform apply -refresh-only 
 
 # destroy the resources
 terraform destroy
 terraform destroy -auto-approve
 
-terraform console # access all variables of the current state
+# access all variables of the current state
+terraform console 
 
 terraform state list # lists everything that has been created
 terraform state show # shows details of everything that has been created
