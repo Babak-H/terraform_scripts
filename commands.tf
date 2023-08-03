@@ -97,4 +97,21 @@ terraform {
   }
 }
 
+# How to set default values for a object in terraform?
+variable "machine_details" {
+  type = object({
+    name = string
+    size = string
+    username = string
+    password = string
+  })
+
+  default = {
+      name = "example-vm"
+      size = "Standard_F2"
+      username  = "adminuser"
+      password = "Notallowed1!"
+    }
+}
+
 
