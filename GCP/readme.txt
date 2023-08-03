@@ -29,3 +29,16 @@ Use a managed instance group (MIG) for scenarios like these:
 advantages: Automatically repairing failed VMs, Application-based auto-healing.
 
 
+google_compute_instance => https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_instance
+google_compute_disk => https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_disk
+google_logging_project_sink => https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/logging_project_sink
+google_compute_instance_group => https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_instance_group
+                              => https://github.com/GoogleCloudPlatform/terraform-google-managed-instance-group/blob/master/main.tf
+                              => https://cloud.google.com/compute/docs/instance-groups/#unmanaged_instance_groups
+google_compute_instance_template => https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_instance_template
+external Application Load Balancers => https://cloud.google.com/load-balancing/docs/https/ext-http-lb-tf-module-examples
+                                    => https://github.com/guillermo-musumeci/terraform-gcp-single-region-private-lb-unmanaged/blob/master/network-firewall.tf
+
+
+
+
