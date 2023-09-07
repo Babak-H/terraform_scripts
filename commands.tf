@@ -19,6 +19,8 @@ terraform apply -refresh-only
 # destroy the resources
 terraform destroy
 terraform destroy -auto-approve
+# shows what will be destroyed
+terraform plan -destroy
 
 # access all variables of the current state
 terraform console 
