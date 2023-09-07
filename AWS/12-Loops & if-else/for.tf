@@ -32,3 +32,15 @@ output "vpc_index" {
 
     # vpcs_index = "(0) main, (1) database, (2) client,"
 }
+
+######### create map with for loop
+output "for_output_map1" {
+    description = "For loop with map"
+    value = {for instance in aws_instance.myec2: instance.id => instance.public_dns}
+}
+
+# with indexing
+output "for_output_map2" {
+    description = "For loop with map and index"
+    value = {for c, instance in aws_instance.myec2: c => instance.public_dns}
+}
