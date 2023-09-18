@@ -5,6 +5,7 @@ resource "aws_iam_policy" "s3-read-policy" {
 }
 
 # create the role
+# the policy inside it allows the role to assume extra policies related to S3 buckets
 resource "aws_iam_role" "s3-read-role" {
   name = "s3-read-role"
   assume_role_policy = "${file("s3-assume-policy.json")}"
