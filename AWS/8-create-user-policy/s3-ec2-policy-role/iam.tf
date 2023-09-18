@@ -12,8 +12,8 @@ resource "aws_iam_role" "s3-read-role" {
 
 # attach role to plicy (role binding)
 resource "aws_iam_role_policy_attachment" "main" {
-  role       = aws_iam_role.s3-read-policy.name
-  policy_arn = aws_iam_policy.s3-read-role.arn
+  role       = aws_iam_role.s3-read-role.name
+  policy_arn = aws_iam_policy.s3-read-policy.arn
 }
 
 # an Iam instance profile passes an IAM role to an instance
