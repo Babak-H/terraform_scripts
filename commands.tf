@@ -1,9 +1,30 @@
+# install Terraform on MacOS
+brew tap hashicorp/tap
+brew install hashicorp/tap/terraform
+brew update
+brew upgrade hashicorp/tap/terraform
+touch ~/.bashrc
+terraform -install-autocomplete
+
+
+# - install both aws CLI and Terraform on your machine
+    https://learn.hashicorp.com/tutorials/terraform/install-cli
+    https://registry.terraform.io/providers/hashicorp/aws/latest/docs#authentication
+    https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html)
+# - then configure the aws user on the machine
+# create main.tf file
+ terraform init                  # initialize terraform, downloads the needed provider api files that are mentioned in terraform file
+ terraform plan                  # show what will be created
+ terraform apply                 # create the resources
+ terraform apply -auto-approve   # without any prompt to approve the apply
+ terraform destroy               # destroy whatever elements was created before
+ terraform destroy -auto-approve # without any prompt to approve the destory
+    
+
+
 terraform init # initializes terraform, downloads the needed provider api files
-
 terraform validate # checks for all the syntaxt errors in the current project
-
 terraform fmt # format the project and correct the formating
-
 terraform plan # show what files will be created
 
 # creates the resources
@@ -15,6 +36,16 @@ terraform apply -replace aws_instance.dev_node.public_ip
 terraform apply -var-file="dev.tfvars"
 # only apply new files and codes
 terraform apply -refresh-only 
+# this will replace the previous configuration of a resource with a newer/edited one. 
+# a. destroys old instance 
+# b. re-creates it again
+terraform apply -replace aws_instance.dev_node
+# terrafirm replace => to force Terraform to replace an object even though there are no configuration changes that would require it.
+terraform apply -replace="aws_instance.example[0]"
+
+# in case you have other terraform variables file instead of terraform.tfvars:
+terraform apply -var-file="dev.tfvars"
+terraform apply -refresh-only  # only applied new files and code
 
 # destroy the resources
 terraform destroy
@@ -28,6 +59,9 @@ terraform console
 terraform state list # lists everything that has been created
 terraform state show # shows details of everything that has been created
 terraform state show aws_instance.dev_node  # show specific resource
+terraform state show aws_vpc.babak-vpc  # get detailed values for an item created by terraform
+terraform state show aws_instance.dev-node.public_ip  # ip address of ec2 instance
+
 
 terraform output # shows all output variables
 
@@ -37,6 +71,63 @@ terraform force-unlock -force <id>
 
 terraform refresh # refreshes the current state
 
+# Terraform scripts are written in HCL language.
+## STRINGS
+"foo" # literal string
+"foo ${var.bar}" # template string
+
+
+## OPERATORS
+# Order of operations: 
+!, - # (multiplication by -1)
+*, /, % # (modulo)
++, - # (subtraction)
+>, >=, <, <= # (comparison)
+==, != # (equality)
+&& # (AND)
+|| # (OR)
+
+
+## CONDITIONALS
+condition ? true_val : false_val
+# For example
+var.a != "" ? var.a : "default-a"
+
+interpreter = var.host_os == "windows" ? ["Powershell", "-Command"] : ["bash", "-c"]
+
+
+## FUNCTIONS
+# Numeric
+abs()  ceil()  floor()  log()  max()  parseint() # parse as integer 
+pow()
+signum() # sign of number
+
+# string
+chomp() # remove newlines at end   
+format() # format number
+formatlist()  indent()  join()  lower()  regex()  regexall()  replace()  split()  strrev() # reverse string
+substr()  title()  trim()  trimprefix()  trimsuffix()  trimspace()  upper()
+
+
+## for_each
+# This would create three copies of some_resource with the name set to "foo", "bar", and "baz" respectively
+resource "some_resource" "example" {
+  for_each = toset( ["foo", "bar", "baz"] )
+  name     = each.key
+}
+
+
+// In Terraform, the element() function is used to retrieve a single element from a list by its index. The syntax for this function is as follows:
+# element(list, index)
+locals {
+    my_list = ["a", "b", "c"]
+    second_element = element(local.my_list, 1)
+}
+
+output "second_element" {
+    value = local.second_element
+}
+
 # element(list, index)  : retrieves a single element from a list
 element(["a", "b", "c"], 1)  # b
 element(["a", "b", "c"], length(["a", "b", "c"])-1)  # c
@@ -45,8 +136,7 @@ element(["a", "b", "c"], length(["a", "b", "c"])-1)  # c
 format("There are %d lights", 4) # there are four lights
 format("lpg%s-%s-%s-%02d", var.resourcetype, var.env, var.datastoretype, count.index + 1)
 
-# terrafirm replace => to force Terraform to replace an object even though there are no configuration changes that would require it.
-terraform apply -replace="aws_instance.example[0]"
+
 
 # Integerate Terraform and Ansible => https://medium.com/geekculture/the-most-simplified-integration-of-ansible-and-terraform-49f130b9fc8
 
@@ -115,5 +205,10 @@ variable "machine_details" {
       password = "Notallowed1!"
     }
 }
+
+# **** Terraform tips *****
+# - Terraform only works when you merge branches into main branch (gets triggered)
+# - Always follow naming convention when creating resources in terraform
+# - CICD pipeline : terraform -> ansible call for dynamic inventory
 
 
