@@ -62,6 +62,8 @@ terraform state show aws_instance.dev_node  # show specific resource
 terraform state show aws_vpc.babak-vpc  # get detailed values for an item created by terraform
 terraform state show aws_instance.dev-node.public_ip  # ip address of ec2 instance
 
+# to connect to the eks cluster provisioned through terraform, we need to download the kubeconfig file of the remote cluster to the local machine
+aws eks update-kubeconfig --name <CLUSTER-NAME> --region <CLUSTER-REGION>
 
 terraform output # shows all output variables
 
