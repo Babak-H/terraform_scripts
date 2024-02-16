@@ -1,0 +1,17 @@
+# we will save this configmap as a script and run it when the docker image boots up
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: usermanagement-dbcreation-script
+data:
+  mysql_usermgmt.sql: |-
+    DROP DATABASE IF EXISTS webappdb;
+    CREATE DATABASE webappdb;
+
+
+# CONFIG MAP
+# 1. A ConfigMap is an API object used to store non-confidential data in key-value pairs
+# 2. Pods can consume ConfigMaps as 
+## environment variables, 
+## command-line arguments, 
+## configuration files in a volume. 

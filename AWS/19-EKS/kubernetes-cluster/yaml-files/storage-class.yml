@@ -1,0 +1,17 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+# our storage class type is AWS elastic block storage, used via CSI driver
+  name: ebs-sc
+provisioner: ebs.csi.aws.com
+# default value is Delete, keeps volume even after deployment is deleted
+# even if we delete the pv in kubernetes, the ebs volume still exists inside the AWS vpc
+reclaimPolicy: Retain 
+allowVolumeExpansion: true # allow increasing size of the volume
+volumeBindingMode: WaitForFirstConsumer
+
+
+
+# STORAGE CLASS 
+# 1. A StorageClass provides a way for administrators to describe the "classes" of storage they offer.
+# 2. Here we are offering EBS Storage for EKS Cluster
