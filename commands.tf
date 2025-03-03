@@ -214,3 +214,15 @@ variable "machine_details" {
 # - CICD pipeline : terraform -> ansible call for dynamic inventory
 
 
+ # *** Upgrade Terraform Module's Version ***
+
+### Core-Operator migration from 0.11.15 to 1.4.6 ###
+
+1. Run the pipeline at version 0.11.15, this step should be without issues except the error related to re-creating the Service Account, for Branch DYN-*****-0.11
+2. set the terraform version to 0.12.12 , this is required for first time due to errors if we set the version to higher than 0.12 sub versions, which is caused by how the formatting of the state files changes in higher terraform versions. only other solution I have found online was to delete and recreate the state file. comment the 
+   aws_iam_role_policy.my_access_policy , this will allow the the OIDC role to be deleted. this will throw an error that Role already exists (plus SA error).  Branch DYN-****-add-harness-0.12
+3. set the version to 0.12.31 , and uncomment aws_iam_role_policy.my_access_policy and run the pipeline. will throw an error that there is wrong value for the policy "MalformedPolicyDocumentException" , re-run the pipeline and the issue will be fixed (will still get the SA error)  Branch DYN-****-add-harness-0.12
+4. run the version 0.13.7 pipeline, no changes should be visible here (except SA error)  Branch DYN-****-add-harness-0.12
+5. run the pipeline version 1.0.7 . here we should see changes related to object_naming.random_string.GUID_GENERATED, aws_s3_bucket_versioning.versioning, aws_s3_bucket_server_side_encryption_configuration.encryption, aws_s3_bucket_public_access_block.deny_public_access, aws_s3_bucket_logging.logging, aws_s3_bucket_lifecycle_configuration.lifecycle, bucket.aws_s3_bucket_acl.acl[0]  being created, this is due to fact that we are moving from older version of s3-bucket to a newer and remote version CP has created, the Role for OIDC will also be recreated as we are moving from internal oidc module to the one hosted on core  Branch DYN-****-add-harness-1.0.7
+6. at this point terraform state is at version 1.0.7 and we can delete the Service account manually from command line and recreate it from pipeline. in lower terraform versions it wouldn't be useful since due to terraform bugs deleting and recreating SA would just cause the error to be reestablished the next time we run the pipeline. run the pipeline again on version of 1.0.7 of terraform, it will re-create the Service account and update some resources that are directly related to it. to make sure everything is working fine, re-run the plan again, there should not be ANY resource that needs creation or update.  Branch DYN-****-add-harness-1.0.7
+7. run the pipeline with terraform version 1.4.6  , it should not re-create any resource, but will update the state to terraform 1.4.6  Branch DYN-***-add-updates
