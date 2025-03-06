@@ -27,6 +27,10 @@ terraform validate # checks for all the syntaxt errors in the current project
 terraform fmt # format the project and correct the formating
 terraform plan # show what files will be created
 
+tf init -backend-config=../../backends/eu-west-2/LOCAL.tfvars
+tf plan -var-file=./D-1/terraform.tfvars
+alias tf=/usr/local/mycorps/versions/0.12.31/terraform
+
 # creates the resources
 terraform apply
 terraform apply -auto-approve  # without need to approve
