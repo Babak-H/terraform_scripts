@@ -1,0 +1,62 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Custom resource to register the wildcard DNS in Route 53 ",
+    "Parameters": {
+        "InternalName": {
+            "Description": "The Internal name to be used in the request",
+            "Type": "String"
+        },
+        "Name": {
+            "Description": "The dns name to associate with the Object <name>.<domain>",
+            "Type": "String"
+        },
+        "Domain": {
+            "Description": "The hosted zone domain e.g. eng.awsdev.my-corps.net",
+            "Type": "String"
+        },
+        "AliasHostedZoneId": {
+            "Description": "The ID of the Amazon Route 53-hosted zone name that is associated with the load balancer.",
+            "Type": "String"
+        },
+        "Type": {
+            "Description": "Type of route53 record",
+            "Type": "String"
+        },
+        "Alias": {
+            "Description": "(boolean): whether this record should be an AWS Route 53 Alias",
+            "Type": "String"
+        }
+    },
+    "Resources": {
+        "UpdateRoute53": {
+            "Type": "Custom::RegisterInRoute53",
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::Sub": "arn:aws:lambda:${region}:${accountId}:function:core-dns-DNSUpdateFunction"
+                },
+                "name": {
+                    "Ref": "Name"
+                },
+                "value": {
+                    "Ref": "InternalName"
+                },
+                "domain": {
+                    "Ref": "Domain"
+                },
+                "alias": {
+                    "Ref": "Alias"
+                },
+                "alias_hosted_zone_id": {
+                    "Ref": "AliasHostedZoneId"
+                },
+                "type": {
+                    "Ref": "Type"
+                }
+            }
+        }
+    },
+    "Metadata": {
+        "version": 1,
+        "md5": "f89a7859bdf32"
+    }
+  }

@@ -1,0 +1,350 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+  # policies for accessing secret manager
+    {
+      "Sid": "SecretsManagerReadWrite",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:GetResourcePolicy",
+        "secretsmanager:CreateSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:UpdateSecret",
+        "secretsmanager:UpdateSecretVersionStage",
+        "secretsmanager:ListSecretVersionIds",
+        "secretsmanager:Tag*",
+        "secretsmanager:UnTag*"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:*:*:secret:*-data-i-secret*",
+        "arn:aws:secretsmanager:*:*:secret:*-fraud-*-superuser*",
+        "arn:aws:secretsmanager:*:*:secret:*-internet-egress-gw-flow*",
+        "arn:aws:secretsmanager:*:*:secret:*-ic-to-flow-jwt-sign-key*"
+      ]
+    },
+    {
+      "Sid": "SecretsManagerJwksKeys",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:GetResourcePolicy",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:ListSecretVersionIds"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:*:*:secret:jwks-keys-test-public-jwks*",
+        "arn:aws:secretsmanager:*:*:secret:interservice-public-jwks*",
+        "arn:aws:secretsmanager:*:*:secret:*gprx-certificate-private-key*",
+      ]
+    },
+    # policies for using kms keys
+    {
+      "Sid": "kmsBasic",
+      "Effect": "Allow",
+      "Action": [
+        "kms:DescribeKey",
+        "kms:ListAliases",
+        "kms:EnableKeyRotation",
+        "kms:CreateAlias",
+        "kms:DeleteAlias",
+        "kms:ScheduleKeyDeletion"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "kms",
+      "Effect": "Allow",
+      "Action": [
+        "kms:GenerateDataKey",
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:ReEncryptFrom",
+        "kms:ReEncryptTo"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "ForAnyValue:StringLike": {
+          "kms:ResourceAliases": [
+            "alias/data-encryption/identity-*",
+            "alias/app-encryption/*-borr_encryption_kms_key",
+            "alias/data-encryption/*-OB__SERVICE",
+            "alias/data-encryption/*-DAT-PII",
+            "alias/service-sign-verify/*-Natwest-Verify-CMK-*",
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "kmsMultiRegion",
+      "Effect": "Allow",
+      "Action": [
+        "kms:ReplicateKey"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "ForAnyValue:StringLike": {
+          "kms:ResourceAliases": [
+            "alias/data-encryption/*-DB-DT",
+            "alias/data-encryption/*-DB-DT-PI"
+          ]
+        }
+      }
+    },
+    # policy for aws connect
+    {
+      "Sid": "Connect",
+      "Effect": "Allow",
+      "Action": [
+        "connect:List*",
+        "connect:Describe*",
+        "connect:*Hierarchy*",
+        "connect:Create*",
+        "connect:UpdateUserRoutingProfile",
+        "connect:AssociateInstanceStorageConfig"
+      ],
+      "Resource": "*"
+    },
+    # policy for using cloudtrail
+    {
+      "Sid": "AllowCloudTrailProcess",
+      "Effect": "Allow",
+      "Action": [
+          "cloudtrail:CreateTrail",
+          "cloudtrail:ListTrails",
+          "cloudtrail:DescribeTrails",
+          "cloudtrail:GetTrail",
+          "cloudtrail:GetTrailStatus",
+          "cloudtrail:LookupEvents",
+          "cloudtrail:GetEventSelectors",
+          "cloudtrail:PutEventSelectors",
+          "cloudtrail:PutInsightSelectors",
+          "cloudtrail:GetInsightSelectors",
+          "cloudtrail:StartLogging",
+          "cloudtrail:ListPublicKeys",
+          "cloudtrail:AddTags",
+          "cloudtrail:ListTags"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+
+
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+    # working with ACM to use and manage certificates
+      "Sid": "acm",
+      "Effect": "Allow",
+      "Action": [
+        "acm:AddTagsToCertificate",
+        "acm:DeleteCertificate",
+        "acm:ExportCertificate",
+        "acm:ImportCertificate",
+        "acm:RemoveTagsFromCertificate",
+        "acm:RenewCertificate",
+        "acm:RequestCertificate",
+        "acm:ResendValidationEmail",
+        "acm:UpdateCertificateOptions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "api",
+      "Effect": "Allow",
+      "Action": [
+        "apigateway:DELETE",
+        "apigateway:PATCH",
+        "apigateway:POST",
+        "apigateway:PUT",
+        "apigateway:UpdateRestApiPolicy"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Athena",
+      "Effect": "Allow",
+      "Action": [
+        "athena:TagResource",
+        "athena:UntagResource",
+        "athena:Create*",
+        "athena:Delete*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Backup",
+      "Effect": "Allow",
+      "Action": [
+        "backup:*",
+        "backup-storage:MountCapsule"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CFN",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:DeleteStackSet",
+        "cloudformation:DeleteStack",
+        "cloudformation:CreateStack"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Cognito",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-sync:*",
+        "cognito-idp:*",
+        "cognito-identity:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EMR",
+      "Effect": "Allow",
+      "Action": [
+        "elasticmapreduce:AddInstanceGroups",
+        "elasticmapreduce:AddJobFlowSteps",
+        "elasticmapreduce:AddTags",
+        "elasticmapreduce:ListInstanceGroups",
+        "elasticmapreduce:ModifyCluster",
+        "elasticmapreduce:ModifyInstanceGroups",
+        "elasticmapreduce:PutAutoScalingPolicy",
+        "elasticmapreduce:PutAutoTerminationPolicy",
+        "elasticmapreduce:RemoveAutoScalingPolicy",
+        "elasticmapreduce:RemoveAutoTerminationPolicy",
+        "elasticmapreduce:RemoveTags",
+        "elasticmapreduce:RunJobFlow",
+        "elasticmapreduce:SetTerminationProtection",
+        "elasticmapreduce:TerminateJobFlows",
+        "elasticmapreduce:CreateSecurityConfiguration",
+        "elasticmapreduce:DeleteSecurityConfiguration"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Firehose",
+      "Effect": "Allow",
+      "Action": [
+        "firehose:Create*",
+        "firehose:DeleteDeliveryStream",
+        "firehose:Put*",
+        "firehose:Tag*",
+        "firehose:Untag*"
+      ],
+      "Resource": "*"
+    },
+    # Policy for OIDC, for accessing EKS cluster
+    {
+      "Sid": "AllowOIDCProviderActions",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateOpenIDConnectProvider",
+        "iam:GetOpenIDConnectProvider",
+        "iam:DeleteOpenIDConnectProvider",
+        "iam:TagOpenIDConnectProvider",
+        "iam:UntagOpenIDConnectProvider"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:oidc-provider/oidc.eks*"
+      ]
+    },
+    {
+      "Sid": "kinesis",
+      "Effect": "Allow",
+      "Action": [
+        "kinesis:Add*",
+        "kinesis:Create*",
+        "kinesis:Decrease*",
+        "kinesis:Delete*",
+        "kinesis:Deregister*",
+        "kinesis:Disable*",
+        "kinesis:Enable*",
+        "kinesis:Increase*",
+        "kinesis:Merge*",
+        "kinesis:Register*",
+        "kinesis:Remove*",
+        "kinesis:Split*",
+        "kinesis:Start*",
+        "kinesis:Stop*",
+        "kinesis:Update*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Lambda",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateAlias",
+        "lambda:CreateEventSourceMapping",
+        "lambda:CreateFunction",
+        "lambda:DeleteAlias",
+        "lambda:DeleteEventSourceMapping",
+        "lambda:DeleteFunction",
+        "lambda:DeleteFunctionConcurrency",
+        "lambda:DeleteLayerVersion",
+        "lambda:DeleteProvisionedConcurrencyConfig",
+        "lambda:TagResource",
+        "lambda:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    # policy for using route53
+    {
+      "Sid": "R53",
+      "Effect": "Allow",
+      "Action": [
+        "route53:CreateHealthCheck",
+        "route53:CreateHostedZone",
+        "route53:DeleteHealthCheck",
+        "route53:DeleteHostedZone"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "TransferFamily",
+      "Effect": "Allow",
+      "Action": [
+        "transfer:DeleteServer",
+        "transfer:DeleteSshPublicKey",
+        "transfer:DeleteUser",
+        "transfer:ImportSshPublicKey",
+        "transfer:ListUsers",
+        "transfer:ListServers",
+        "transfer:ListTagsForResource",
+        "transfer:StartServer",
+        "transfer:StopServer",
+        "transfer:TagResource",
+        "transfer:UntagResource",
+        "transfer:UpdateServer",
+        "transfer:UpdateUser"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "StepFunctions",
+      "Effect": "Allow",
+      "Action": [
+        "states:CreateStateMachine",
+        "states:CreateStateMachineAlias",
+        "states:DeleteStateMachine",
+        "states:DeleteStateMachineAlias",
+        "states:TagResource",
+        "states:UntagResource",
+        "states:UpdateStateMachine",
+        "states:UpdateStateMachineAlias"
+      ],
+      "Resource": [
+        "arn:aws:states:eu-west-2:*:stateMachine:*ekb*",
+        "arn:aws:states:eu-west-2:*:stateMachine:*rf*"
+        ]
+    }
+  ]
+}
