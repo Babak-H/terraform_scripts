@@ -232,4 +232,18 @@ variable "machine_details" {
 # Comparing that updated state with the desired state described by the configuration, and in case of any differences generating a proposed set of actions to change the real remote objects to match the desired state.
 # When you create a "refresh-only" plan, you're disabling the second of those, but still performing the first. Terraform will update the state to match changes made outside of Terraform, and then ask you if you want to commit that result as a new state snapshot to use on future runs. Typically the desired result of a refresh-only plan is for Terraform to report that there were no changes outside of Terraform, although Terraform does allow you to commit the result as a new state snapshot if you wish, for example if the changes cascaded from an updated object used as a data resource and you want to save those new results.
 
+# if a local variable and global variable both have the same name, terraform will only read the global one and ignore the local variable inside the resources.
+
+# Error: Provider configuration not present
+# To work with "module.my_module.some_resource.resource_name" its original provider configuration at "module.my_module.provider.some_provider.provider_name" is required, but it
+# has been removed. This occurs when a provider configuration is removed while objects created by that provider still exist in the state. Re-add the provider configuration to destroy
+# module.my_module.some_resource.resource_name, after which you can remove the provider configuration again.
+
+# Terraform has detected that there are resource objects still present in the state whose provider configurations are not available, and so it doesn't have enough information to destroy those resources.
+#  there is a provider configuration block in one of your child modules. While that is permitted for compatibility with older versions of Terraform, it's recommended to only have provider blocks in your root module so that they can always outlive any resource instances that the provider is managing
+# If your intent is to destroy the resource instances in module.my_module then you must do that before removing the module "my_module" block from the root module. This is one unusual situation where we can use -target to help Terraform understand what we want it to do:
+terraform destroy -target=module.my_module
+
+# If your goal is to move resource blocks into another module, the other possible resolution here is to use terraform state mv to instruct Terraform to track the existing object under a new address:
+terraform state mv 'module.my_module.some_resource.resource_name' 'module.other_module.some_resource.resource_name'
 
