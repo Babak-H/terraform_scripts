@@ -1,5 +1,5 @@
 # aws_vpc: the static name that can't be changed
-# main : custom name for the vpc, can be whatever we want it to be, it will NOT show up in AWS
+# babak-vpc : custom name for the vpc, can be whatever we want it to be, it will NOT show up in AWS
 resource "aws_vpc" "babak-vpc" {
   cidr_block           = "10.123.0.0/16"
   enable_dns_hostnames = true
@@ -13,9 +13,9 @@ resource "aws_vpc" "babak-vpc" {
 # what resources we want to provision
 resource "aws_subnet" "babak-subnet" {
   # static name for vpc => custom name for our vpc => our vpc's id
-  vpc_id                  = aws_vpc.babak-vpc.id
-  cidr_block              = "10.123.1.0/24"
-  # Auto-assign IPV4 (for ec2 instances)
+  vpc_id     = aws_vpc.babak-vpc.id
+  cidr_block = "10.123.1.0/24"
+  # Auto-assign public IPV4 (for ec2 instances)
   map_public_ip_on_launch = true
   availability_zone       = "us-east-1a"
 
@@ -83,13 +83,14 @@ resource "aws_key_pair" "babak_auth" {
   public_key = file("~/.ssh/babak-key.pub")
 }
 
+# ec2 instance creation
 resource "aws_instance" "dev-node" {
   instance_type          = "t2.micro"
   ami                    = data.aws_ami.babak_ami.id
   key_name               = aws_key_pair.babak_auth.id
   vpc_security_group_ids = [aws_security_group.babak-sg.id]
   subnet_id              = aws_subnet.babak-subnet.id
-  user_data = file("userdata.tpl")
+  user_data              = file("userdata.tpl")
 
   root_block_device {
     volume_size = 10
@@ -99,5 +100,3 @@ resource "aws_instance" "dev-node" {
     Name = "dev-node"
   }
 }
-
-
