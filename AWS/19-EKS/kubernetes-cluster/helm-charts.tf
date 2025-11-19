@@ -1,3 +1,6 @@
+/* this will create two service accounts:
+ebs-csi-controller-sa | ebs-csi-node-sa */
+
 # install EBS CSI driver using HELM
 # Resource: Helm Release, A Release is an instance of a chart running in a Kubernetes cluster
 resource "helm_release" "ebs_csi_driver" {
@@ -38,8 +41,32 @@ output "ebs_csi_helm_metadata" {
   value = helm_release.ebs_csi_driver.metadata
 }
 
-/*
-this will create two service accounts
-ebs-csi-controller-sa
-ebs-csi-node-sa
-*/
+# This Helm chart will install cert-manager for adding TLS certificates to the Kubernetes cluster
+resource "helm_release" "cert_manager" {
+  name = "cert-manager"
+
+  repository       = "https://charts.jetstack.io"
+  chart            = "cert-manager"
+  namespace        = "cert-manager"
+  create_namespace = true
+  version          = "v1.14.4"
+
+  set {
+    name  = "installCRDs"
+    value = "true"
+  }
+
+  # Optional: Used for the DNS-01 challenge.
+  set {
+    name  = "serviceAccount.name"
+    value = "cert-manager"
+  }
+
+  # Optional: Used for the DNS-01 challenge.
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.dns_manager.arn
+  }
+
+  depends_on = [aws_eks_node_group.general]
+}
