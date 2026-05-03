@@ -1,4 +1,27 @@
-.terraform.lock.hcl
-.terraform/
-terraform.tfstate
-terraform.tfstate.backup
+# Terraform working directories and state
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Terraform variable and override files (often contain secrets)
+*.tfvars
+*.tfvars.json
+*.auto.tfvars
+*.auto.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI and local metadata
+.terraformrc
+terraform.rc
+
+# Keep lock files versioned
+!**/.terraform.lock.hcl
+
+# Local secrets and credential exports
+.env
+*.csv
