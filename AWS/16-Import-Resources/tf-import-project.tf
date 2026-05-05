@@ -1,11 +1,21 @@
 # 1. terraform init
 # 2. terraform plan => to check what resources are already existing
 
+terraform {
+  required_version = ">= 1.10.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+}
+
 provider "aws" {
     region = "us-east-1"
 }
 
-# 3. to import a resource we should first mention it, local name isn't important but needs correct cidr_block
+# 3. to import a VPC resource we should first mention it, local name isn't important but needs correct cidr_block
 # this works as a empty holder to keep the imported resource from AWS
 resource "aws_vpc" "main" {
   cidr_block =  "10.0.0.0/18"
@@ -14,13 +24,15 @@ resource "aws_vpc" "main" {
     Name = "main"
   }
 }
+
 /*
 4. then we can import it via this command (for vpc). the id is available on the aws console 
 we save the remote resource into the local one in terraform
+
 terraform import aws_vpc.main vpc-<ID>
 */
 
-# for subnet we need to mention the vpc-id, cidr block and the tag in placeholder to import the correct resource
+# for Subnet we need to mention the vpc-id, cidr block and the tag in placeholder to import the correct resource
 resource "aws_subnet" "public" {
   vpc_id     = aws_vpc.main.id
   cidr_block = "10.0.0.0/24"
@@ -38,7 +50,9 @@ resource "aws_subnet" "private" {
     Name = "private"
   }
 }
+
 # 4. this process has to be run one-by-one for each resource 
+
 # terraform import aws_subnet.public subnet-<ID>
 # terraform import aws_subnet.private subnet-<id>
 
@@ -52,7 +66,7 @@ resource "aws_internet_gateway" "igw" {
 # terraform import aws_internet_gateway.igw igw-<ID>
 
 resource "aws_eip" "nat_eip" {
-  vpc = true
+  domain   = "vpc"
   depends_on = [aws_internet_gateway.igw]
 }
 # terraform import aws_eip.nat_eip <IP-ADDRESS>

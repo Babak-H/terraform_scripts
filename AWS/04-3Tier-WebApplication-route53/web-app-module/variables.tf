@@ -1,48 +1,76 @@
-# General Variables
+# General variables.
 variable "region" {
-  description = "Default region for provider"
+  description = "Default AWS region."
   type        = string
   default     = "us-east-1"
 }
 
-# EC2 Variables
-variable "ami" {
-  description = "Amazon machine image to use for ec2 instance"
+variable "app_name" {
+  description = "Application name used in resource names and tags."
   type        = string
-  default     = "ami-011899242bb902164" # Ubuntu 20.04 LTS // us-east-1
+}
+
+variable "environment_name" {
+  description = "Environment name, for example production, staging, or dev."
+  type        = string
+}
+
+# EC2 variables
+variable "ubuntu_ami_ssm_parameter" {
+  description = "Public SSM parameter path for the Ubuntu AMI ID to use for EC2 instances."
+  type        = string
+  default     = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
 }
 
 variable "instance_type" {
-  description = "ec2 instance type"
+  description = "EC2 instance type."
   type        = string
   default     = "t2.micro"
 }
 
-# S3 Variables
+# S3 variables.
 variable "bucket_name" {
-  description = "name of s3 bucket for app data"
+  description = "Name of the S3 bucket for app data."
   type        = string
 }
 
-# Route 53 Variables
+# Route 53 variables.
 variable "domain" {
-  description = "Domain for website"
+  description = "Domain for the website."
   type        = string
 }
 
-# RDS Variables
+variable "create_dns_zone" {
+  description = "Whether to create a new Route 53 hosted zone instead of using an existing one."
+  type        = bool
+  default     = false
+}
+
+# RDS variables
 variable "db_name" {
-  description = "Name of DB"
+  description = "Database name."
   type        = string
 }
 
 variable "db_user" {
-  description = "Username for DB"
+  description = "Database username."
   type        = string
 }
 
 variable "db_pass" {
-  description = "Password for DB"
+  description = "Database password."
   type        = string
   sensitive   = true
+}
+
+variable "db_allocated_storage" {
+  description = "Allocated database storage in GiB."
+  type        = number
+  default     = 20
+}
+
+variable "db_instance_class" {
+  description = "RDS DB instance class."
+  type        = string
+  default     = "db.t3.micro"
 }

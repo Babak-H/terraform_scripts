@@ -4,23 +4,25 @@
 
 locals {
   template_body = templatefile("${path.module}/register-route53.json", {
-    region = var.region
+    region    = var.region
     accountId = data.aws_caller_identity.current.account_id
   })
 }
 
-resource "aws_cloud_formation_stack" "route53" {
+data "aws_caller_identity" "current" {}
+
+resource "aws_cloudformation_stack" "route53" {
   name = "${var.object_name}-route53"
 
   parameters = {
-    InternalName = var.internal_name
-    Name = var.dns_name
+    InternalName      = var.internal_name
+    Name              = var.dns_name
     AliasHostedZoneId = var.zone_id
-    Domain = var.domain_name
-    Alias = var.alias
-    Type = var.type
+    Domain            = var.domain_name
+    Alias             = tostring(var.alias)
+    Type              = var.type
   }
 
-  template_body = locals.template_body
-  tags = var.tags
+  template_body = local.template_body
+  tags          = var.tags
 }

@@ -28,6 +28,7 @@ aws configure
 # Common Terraform workflow:
 terraform init                  # Initialize the working directory and install providers/modules
 terraform fmt                   # Format Terraform configuration files
+terraform fmt -recursive
 terraform validate              # Check syntax and internal consistency
 terraform plan                  # Preview proposed infrastructure changes
 terraform apply                 # Apply proposed changes after confirmation
@@ -366,3 +367,9 @@ resource "aws_iam_role" "my_role" {
 # | You just need a different name                                                          | **Rename in config** |
 
 # The **import** path is almost always the right call — it avoids downtime and lets Terraform take over management cleanly. After importing, always run `terraform plan` to confirm there's no unintended drift between your config and the real resource state.
+
+# this is how we can see who is the current person that is using this AWS account:
+data "aws_caller_identity" "current" {}
+
+# how to use it
+data.aws_caller_identity.current.account_id

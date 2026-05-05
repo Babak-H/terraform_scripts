@@ -1,7 +1,6 @@
 resource "aws_instance" "Web" {
   ami = "ami-0b5eea76982371e91"
   instance_type = "t2.micro"
-  count = 1
   subnet_id = aws_subnet.my_app-subnet.id
   key_name = "Web-key"
   security_groups = [aws_security_group.App_SG.id]
@@ -12,9 +11,9 @@ resource "aws_instance" "Web" {
     type = "ssh"
     user = "ec2-user"
     private_key = tls_private_key.Web-key.private_key_pem
-    host = aws_instance.Web.public_ip
+    host = self.public_ip
   }
-  # these are commands that are run when we ssh into the target host
+    # these are commands that are run when we ssh into the target host
     inline = [
        "sudo yum install httpd  php git -y",
        "sudo systemctl restart httpd",
@@ -27,9 +26,9 @@ resource "aws_instance" "Web" {
   }
 }
 
-
+# create an ebs volume of size 1G
 resource "aws_ebs_volume" "myebs1" {
-  availability_zone = aws_instance.Web[0].availability_zone
+  availability_zone = aws_instance.Web.availability_zone
   # size of volume in GB
   size = 1
   tags = {
@@ -37,11 +36,12 @@ resource "aws_ebs_volume" "myebs1" {
   }
 }
 
+# attach the created ebs volume to the ec2 instance
 resource "aws_volume_attachment" "attach_ebs" {
   depends_on = [aws_ebs_volume.myebs1]
   device_name = "/dev/sdh"
   volume_id = aws_ebs_volume.myebs1.id
-  instance_id = aws_instance.Web[0].id
+  instance_id = aws_instance.Web.id
   force_detach = true
 }
 

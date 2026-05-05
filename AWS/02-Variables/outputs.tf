@@ -1,4 +1,5 @@
 # these are the variables that can be used AFTER some item has been provisioned, can be used when creating other elements that might need it
+# in the CLI, consumed by child/parent modules, or read from remote state
 output "instance_ip_addr" {
   value = aws_instance.instance.private_ip
 }

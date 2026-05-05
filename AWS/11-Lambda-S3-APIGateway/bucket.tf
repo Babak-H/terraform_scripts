@@ -1,4 +1,4 @@
-# generate a name
+# generate a globally unique bucket name
 resource "random_pet" "lambda_bucket_name" {
   prefix = "lambda"
   length = 2
@@ -28,12 +28,12 @@ data "archive_file" "hello_lambda" {
   output_path = "./function-lambda.zip"
 }
 
-# upload the zipfile to S3
+# upload the Lambda deployment package to S3 (add an object to the S3 bucket)
 resource "aws_s3_object" "hello_lambda" {
   bucket = aws_s3_bucket.lambda_bucket.id
   key    = "function-lambda.zip"
-  source = data.archive_file.hello_lambda.output_path
+  source = "${path.module}/function-lambda.zip"
 
-  # this triggers an update, when value of the zip file changes
-  etag = filemd5(data.archive_file.hello_lambda.output_path)
+  # trigger an update when the local zip file changes
+  source_hash = filebase64sha256("${path.module}/function-lambda.zip")
 }

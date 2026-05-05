@@ -1,43 +1,79 @@
-# local variable to use in this file
 locals {
+  # Local value for the CloudFront S3 origin ID
   s3_origin_id = "s3-origin"
 }
 
 resource "aws_s3_bucket" "babak2023s3bucketjan" {
   bucket = var.bucket_name
-  
-  tags = {
-    Name = var.bucket_name
-    Environment = "Dev"
-  }
 
-  provisioner "local-exec" {
-    command = "git clone https://github.com/vineets300/Webpage1.git web-server-image"
+  tags = {
+    Name        = var.bucket_name
+    Environment = "Dev"
   }
 }
 
+# enable versioning on the bucket
 resource "aws_s3_bucket_versioning" "babak-versioning-s3" {
   bucket = aws_s3_bucket.babak2023s3bucketjan.id
+
   versioning_configuration {
     status = "Enabled"
   }
 }
 
-resource "aws_s3_bucket_acl" "babak-acl-s3" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "bucket" {
   bucket = aws_s3_bucket.babak2023s3bucketjan.id
-  acl= var.s3-acl
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
 }
 
-resource "aws_s3_account_public_access_block" "public_storage" {
-  depends_on = [aws_s3_bucket.babak2023s3bucketjan]
-  block_public_acls = false
-  block_public_policy = false
+# normally everything on this bucket will become blocked to public
+resource "aws_s3_bucket_public_access_block" "bucket" {
+  bucket = aws_s3_bucket.babak2023s3bucketjan.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
+# adding an object to the bucket via terraform
 resource "aws_s3_object" "Object1" {
-  depends_on = [aws_s3_bucket.babak2023s3bucketjan]
-  bucket = var.bucket_name
-  key = "Image1.jpg"
-  source = "web-image/Image1.jpg"
-  acl = var.s3-acl
+  bucket       = aws_s3_bucket.babak2023s3bucketjan.id
+  key          = "Image1.jpg"
+  source       = "${path.root}/web-image/Image1.jpg"
+  content_type = "image/jpeg"
+}
+
+# this policy allows cloudfront to read all the objects inside the S3 bucket
+data "aws_iam_policy_document" "allow_cloudfront" {
+  statement {
+    sid = "AllowCloudFrontServicePrincipalReadOnly"
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+
+    actions = ["s3:GetObject"]
+
+    resources = [
+      "${aws_s3_bucket.babak2023s3bucketjan.arn}/*",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_cloudfront_distribution.dev-cloudfront1.arn]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "allow_cloudfront" {
+  bucket = aws_s3_bucket.babak2023s3bucketjan.id
+  policy = data.aws_iam_policy_document.allow_cloudfront.json
 }

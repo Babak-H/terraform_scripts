@@ -1,23 +1,23 @@
-# create api-gateway based on HTTP protocol
+# create an API Gateway HTTP API
 resource "aws_apigatewayv2_api" "main" {
   name          = "main"
   protocol_type = "HTTP"
 }
 
-# create cloudwatch log group for the api-gateway resource
+# create another CloudWatch log group for API Gateway access logs
 resource "aws_cloudwatch_log_group" "main_api_gw" {
   name              = "/aws/api-gw/${aws_apigatewayv2_api.main.name}"
   retention_in_days = 14
 }
 
-# create environment (dev, test,...)
+# create a deployment stage such as dev, test, or prod
 resource "aws_apigatewayv2_stage" "dev" {
   api_id = aws_apigatewayv2_api.main.id
 
   name        = "dev"
   auto_deploy = true
 
-  # set logging settings (optional)
+  # configure access logs
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.main_api_gw.arn
 

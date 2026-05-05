@@ -4,36 +4,45 @@ data "aws_vpc" "default_vpc" {
   default = true
 }
 
-# default subnet inside the above vpc
-data "aws_subnet_ids" "default_subnet" {
-  vpc_id = data.aws_vpc.default_vpc.id
+# default subnets inside the default vpc
+data "aws_subnets" "default_subnets" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default_vpc.id]
+  }
 }
 
-# create security group for the ec2 instances
+# Create a security group for the EC2 instances
 resource "aws_security_group" "instances" {
-  name = "${var.app_name}-${var.environment_name}-instance-security-group"
+  name        = "${var.app_name}-${var.environment_name}-instance-security-group"
+  description = "Allow ALB traffic to app instances"
+  vpc_id      = data.aws_vpc.default_vpc.id
 }
 
-# then attach rules to the security group
-resource "aws_security_group_rule" "allow_http_inbound" {
-  type              = "ingress"
-  security_group_id = aws_security_group.instances.id
+# Allow HTTP traffic from the ALB to the instances
+resource "aws_vpc_security_group_ingress_rule" "allow_http_from_alb" {
+  security_group_id            = aws_security_group.instances.id
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = 8080
+  ip_protocol                  = "tcp"
+  to_port                      = 8080
+}
 
-  from_port   = 8080
-  to_port     = 8080
-  protocol    = "tcp"
-  cidr_blocks = ["0.0.0.0/0"]
+# Allow instances to reach the internet for package updates
+# instances can access all ip addresses and all protocols for egress (outgoing traffic)
+resource "aws_vpc_security_group_egress_rule" "allow_instances_all_outbound" {
+  security_group_id = aws_security_group.instances.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
 }
 
 # create ALB loadbalancer listener
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.load_balancer.arn
+  port              = 80
+  protocol          = "HTTP"
 
-  port = 80
-
-  protocol = "HTTP"
-
-  # By default, return a simple 404 page
+  # By default, return a simple 404 page (when address is not defined)
   default_action {
     type = "fixed-response"
 
@@ -94,42 +103,35 @@ resource "aws_lb_listener_rule" "instances" {
   }
 }
 
-# create security group for the loadbalancer
+# create security group for the loadbalancer (this is before data reaches the EC2 security group)
 resource "aws_security_group" "alb" {
-  name = "${var.app_name}-${var.environment_name}-alb-security-group"
+  name        = "${var.app_name}-${var.environment_name}-alb-security-group"
+  description = "Allow public HTTP traffic to the ALB"
+  vpc_id      = data.aws_vpc.default_vpc.id
 }
 
-# inbound security rules for alb
-resource "aws_security_group_rule" "allow_alb_http_inbound" {
-  type              = "ingress"
+# ALB SG Ingress Rule: Allow public HTTP traffic to the ALB (traffic will then reach ec2 security group)
+resource "aws_vpc_security_group_ingress_rule" "allow_alb_http_inbound" {
   security_group_id = aws_security_group.alb.id
-
-  from_port   = 80
-  to_port     = 80
-  protocol    = "tcp"
-  cidr_blocks = ["0.0.0.0/0"]
-
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 80
+  ip_protocol       = "tcp"
+  to_port           = 80
 }
 
-# outbound  security rules for alb
-resource "aws_security_group_rule" "allow_alb_all_outbound" {
-  type              = "egress"
+# ALB SG Egress Rule: Allow outbound traffic from the ALB to targets (traffic will come from ec2 security group)
+resource "aws_vpc_security_group_egress_rule" "allow_alb_all_outbound" {
   security_group_id = aws_security_group.alb.id
-  # allow data to exit from all ports
-  from_port   = 0
-  to_port     = 0
-  protocol    = "-1"
-  cidr_blocks = ["0.0.0.0/0"]
-
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
 }
 
-# create the Application Load Balancer itself
+# create the Application Load Balancer itself 
 resource "aws_lb" "load_balancer" {
-  name               = "${var.app_name}-${var.environment_name}-web-app-lb"
+  name               = "${var.app_name}-${var.environment_name}-web-app-alb"
   load_balancer_type = "application"
-  # associate alb with default subnet
-  subnets            = data.aws_subnet_ids.default_subnet.ids
-  # attach loadbalancer security group with it
+  # associate alb with default subnets
+  subnets            = data.aws_subnets.default_subnets.ids
+  # attach loadbalancer security group to it
   security_groups    = [aws_security_group.alb.id]
-
 }

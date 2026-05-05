@@ -1,6 +1,7 @@
 #!/bin/bash
-sudo yum install httpd  php git -y
-sudo systemctl restart httpd
-sudo systemctl enable httpd
-sudo rm -rf /var/www/html/*
-sudo git clone https://github.com/vineets300/Webpage1.git  /var/www/html
+set -euxo pipefail
+
+dnf install -y httpd php git
+systemctl enable --now httpd
+rm -rf /var/www/html/*
+git clone https://github.com/vineets300/Webpage1.git /var/www/html

@@ -1,16 +1,18 @@
 terraform {
   backend "s3" {
-    bucket         = "devops-directive-tf-state"
-    key            = "06-organization-and-modules/web-app/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "terraform-state-locking"
-    encrypt        = true
+    bucket       = "devops-directive-tf-state"
+    key          = "04-3tier-web-application-route53/web-app/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
   }
+
+  required_version = ">= 1.10.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 4.0"
+      version = "~> 6.0"
     }
   }
 }
@@ -19,6 +21,7 @@ provider "aws" {
   region = "us-east-1"
 }
 
+# Terraform prompts for these sensitive variables if they are not provided
 # will be prompted to type this variable
 variable "db_pass_1" {
   description = "password for database #1"
@@ -33,10 +36,10 @@ variable "db_pass_2" {
 }
 
 module "web_app_1" {
-# import all the files from the web-app-module folder in here
+  # import all the files from the web-app-module folder in here
   source = "./web-app-module"
 
-  # Input Variables, this is same as terraform.tfvars file
+  # Input variables, These can also be provided through a terraform.tfvars file
   bucket_name      = "web-app-1-devops-directive-web-app-data"
   domain           = "devopsdeployed.com"
   app_name         = "web-app-1"
@@ -48,8 +51,9 @@ module "web_app_1" {
   db_pass          = var.db_pass_1
 }
 
+# the second module instance of the same child module called "web-app-module"
 module "web_app_2" {
-  source = "../web-app-module"
+  source = "./web-app-module"
 
   # Input Variables
   bucket_name      = "web-app-2-devops-directive-web-app-data"

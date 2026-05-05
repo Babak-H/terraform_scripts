@@ -3,9 +3,9 @@
 ###################################
 
 variable "tags" {
-  type = map(string)
+  type        = map(string)
   description = "a map of additional tags"
-  default = {}
+  default     = {}
 }
 
 variable "internal_name" {
@@ -15,7 +15,7 @@ variable "internal_name" {
 
 variable "object_name" {
   type        = string
-  description = ""
+  description = "Name prefix for the CloudFormation stack."
 }
 
 variable "region" {
@@ -48,10 +48,3 @@ variable "alias" {
   type        = bool
   description = "Whether this record should be an AWS Route 53 Alias"
 }
-
-
-
-
-
-
-

@@ -1,18 +1,19 @@
 terraform {
   ## AFTER RUNNING TERRAFORM APPLY (WITH LOCAL BACKEND) YOU WILL UNCOMMENT THIS CODE THEN RERUN TERRAFORM INIT
   ## TO SWITCH FROM LOCAL BACKEND TO REMOTE AWS BACKEND
+  
   # backend "s3" {
-  #   bucket         = "my-cloud-tf-state"
-  #   key            = "terraform.tfstate"
-  #   region         = "us-east-1"
-  #   dynamodb_table = "terraform-state-locking"
-  #   encrypt        = true
+  #   bucket       = "my-cloud-tf-state"
+  #   key          = "/dev/stat-file/terraform.tfstate"
+  #   region       = "us-east-1"
+  #   encrypt      = true
+  #   use_lockfile = true
   # }
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 3.0"
+      version = "~> 6.0"
     }
   }
 }
@@ -42,16 +43,5 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "terraform_state_c
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
     }
-  }
-}
-
-# create dynamodb database to keep terraform lock, so two developers can't apply at once
-resource "aws_dynamodb_table" "terraform_locks" {
-  name         = "terraform-state-locking"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
-  attribute {
-    name = "LockID"
-    type = "S"
   }
 }
