@@ -370,11 +370,74 @@ A role provides temporary credentials. Trust policy says who can assume it. Perm
 
 ## VPC
 
-A **VPC**, or Virtual Private Cloud, is your private network boundary inside AWS. It is logically isolated from other AWS customers and from other VPCs unless you explicitly connect them. A VPC is where you launch networked resources such as EC2 instances, RDS databases, load balancers, NAT gateways, and some endpoint resources.
+A **VPC**, or Virtual Private Cloud, is your private network boundary inside AWS. It is a logically isolated virtual network where you decide the IP ranges, subnets, routing, gateways, and security controls. A VPC is where you place networked resources such as EC2 instances, RDS databases, load balancers, NAT gateways, VPC endpoints, ECS tasks, EKS nodes, Lambda VPC attachments, and many other services.
 
-A VPC belongs to **one AWS Region**, but it spans all Availability Zones in that Region. Inside the VPC, you create **subnets**, and each subnet lives in exactly one Availability Zone. The VPC itself defines the overall IP address space, usually with one or more IPv4 CIDR blocks such as `10.0.0.0/16`. You can also associate IPv6 CIDR blocks. The CIDR range is important because it affects routing, future expansion, peering, VPNs, Transit Gateway design, and overlap problems.
+A VPC belongs to **one AWS Region**, but it spans all Availability Zones in that Region. Inside the VPC, you create **subnets**, and each subnet lives in exactly one Availability Zone. This distinction matters for high availability: the VPC is regional, but your actual placement strategy is built from multiple subnets across multiple AZs.
 
-The main VPC building blocks are: CIDR blocks, subnets, route tables, security groups, network ACLs, internet gateway, NAT gateway, VPC endpoints, peering connections, DHCP options, and sometimes VPN or Direct Connect attachments. In real work, most VPC troubleshooting is about routing, DNS, security groups, NACLs, endpoint policies, or IP exhaustion.
+The VPC itself defines the overall IP address space, usually with one or more IPv4 CIDR blocks such as `10.0.0.0/16`. You can also associate IPv6 CIDR blocks. CIDR planning is one of the most important early design choices because it affects subnet sizing, routing, VPC peering, VPNs, Transit Gateway attachments, future account expansion, and overlap with on-premises networks. Overlapping CIDR ranges are painful because many AWS connectivity options require non-overlapping ranges.
+
+Common VPC building blocks:
+
+* **CIDR blocks**: define the private IP ranges available inside the VPC.
+* **Subnets**: split the VPC IP range by AZ and workload type.
+* **Route tables**: decide where traffic goes based on destination.
+* **Internet gateway**: allows public subnets to send and receive internet traffic.
+* **NAT gateway**: lets private subnet resources make outbound connections without accepting unsolicited inbound internet traffic.
+* **Security groups**: stateful firewall rules attached to resources such as EC2 instances, ENIs, load balancers, and RDS instances.
+* **Network ACLs**: stateless firewall rules attached at the subnet level.
+* **VPC endpoints**: private paths to supported AWS services.
+* **VPC peering, Transit Gateway, VPN, and Direct Connect**: ways to connect VPCs or connect AWS to external networks.
+* **DNS settings and DHCP options**: control name resolution and basic network configuration inside the VPC.
+
+### Default VPC vs custom VPC
+
+Many AWS accounts include a **default VPC** in each Region. A default VPC is convenient for quick testing because it already has subnets, an internet gateway, route tables, and default security settings. However, production systems usually use **custom VPCs** because you can design the CIDR ranges, subnet tiers, routing, naming, tags, security boundaries, and high availability layout intentionally.
+
+The default VPC is useful for learning, but it can hide important networking details. In a real environment, you normally want explicit Terraform-managed VPC resources so the design is repeatable and reviewable.
+
+### Public, private, and isolated network design
+
+Subnets are often described as **public**, **private**, or **isolated**, but these are design patterns, not separate AWS subnet types.
+
+* A **public subnet** has a route to an internet gateway, usually `0.0.0.0/0 -> igw-...`. For an EC2 instance to be reachable from the internet over IPv4, it also needs a public IPv4 address or Elastic IP, plus security group and NACL rules that allow the traffic.
+* A **private subnet** does not route directly to an internet gateway. It often has outbound internet access through a NAT gateway, usually `0.0.0.0/0 -> nat-...`.
+* An **isolated subnet** has no default route to the internet through either an internet gateway or NAT gateway. It may only route to local VPC resources, VPC endpoints, Transit Gateway, VPN, Direct Connect, or other private networks.
+
+A common production pattern is:
+
+* Public subnets for internet-facing load balancers, NAT gateways, and sometimes bastion hosts.
+* Private application subnets for EC2, ECS, EKS, or Lambda-connected workloads.
+* Private database subnets for RDS, ElastiCache, OpenSearch, or other data services.
+
+The name of a subnet does not make it public or private. The route table does.
+
+### Internet gateway and NAT gateway
+
+An **internet gateway** is attached to a VPC and provides a route target for internet traffic. A public subnet normally has a default route to the internet gateway. For inbound IPv4 access to an EC2 instance, the instance needs a public IPv4 address or Elastic IP. For IPv6, internet-routable IPv6 addresses can be used directly, so the security rules become especially important.
+
+A **NAT gateway** is usually placed in a public subnet and used by private subnets for outbound IPv4 internet access. Private instances send internet-bound traffic to the NAT gateway, and the NAT gateway sends it out through the internet gateway. Return traffic is allowed, but external hosts cannot start new inbound connections to the private instances through the NAT gateway.
+
+For high availability, place NAT gateways in multiple AZs and route each private subnet to the NAT gateway in the same AZ. A single NAT gateway for all private subnets is cheaper but creates an AZ dependency and can add cross-AZ data transfer.
+
+### DNS inside a VPC
+
+VPC DNS behavior matters more than people expect. Two common VPC attributes are:
+
+* `enableDnsSupport`: allows use of the Amazon-provided DNS resolver.
+* `enableDnsHostnames`: allows public DNS hostnames for instances with public IPs in supported cases.
+
+Private DNS is also important for VPC endpoints. For many interface endpoints, enabling private DNS makes the normal AWS service hostname resolve to private IP addresses inside the VPC. Without private DNS, applications may still try to reach the public AWS API endpoint and fail if the subnet has no NAT or internet access.
+
+For hybrid environments, DNS can involve Route 53 private hosted zones, Route 53 Resolver inbound endpoints, outbound endpoints, and forwarding rules to on-premises DNS servers.
+
+### Security groups vs NACLs
+
+VPC security is usually controlled with both **security groups** and **network ACLs**, but they work differently.
+
+* **Security groups** are stateful and attached to resources. If inbound traffic is allowed, the response traffic is automatically allowed. Security groups only have allow rules.
+* **Network ACLs** are stateless and attached to subnets. You must allow both inbound and outbound traffic, including ephemeral ports for return traffic. NACLs support both allow and deny rules.
+
+In most application designs, security groups are the primary control. NACLs are often kept simple unless there is a specific subnet-level deny or compliance requirement.
 
 ### VPC endpoint
 
@@ -389,6 +452,34 @@ VPC endpoints are useful when private EC2 instances, Lambda functions, ECS tasks
 
 Common gotcha: creating an endpoint is not always enough. You may also need private DNS enabled, correct subnet placement, correct security group rules for interface endpoints, correct route table associations for gateway endpoints, and endpoint policies that allow the required actions.
 
+Endpoints can also reduce NAT gateway traffic and help keep service calls on private AWS networking. However, endpoints are not magic. The application still needs IAM permissions, endpoint policies must allow the request, security groups must allow traffic to interface endpoint ENIs, and DNS must resolve the way the application expects.
+
+### VPC flow logs
+
+**VPC Flow Logs** capture metadata about IP traffic going to and from network interfaces, subnets, or the whole VPC. They do not capture packet payloads, but they are very useful for troubleshooting and auditing.
+
+Flow logs can help answer questions like:
+
+* Is traffic reaching the instance ENI?
+* Is traffic accepted or rejected?
+* What source IP and destination port are being used?
+* Is an unexpected workload talking to the internet?
+* Are NACLs or security groups likely blocking traffic?
+
+Flow logs can be sent to CloudWatch Logs, S3, or Kinesis Data Firehose. They are often used with CloudWatch Logs Insights, Athena, or security tooling.
+
+### Connecting VPCs and external networks
+
+There are several ways to connect a VPC to other networks:
+
+* **VPC peering**: simple one-to-one private connectivity between two VPCs.
+* **Transit Gateway**: hub-and-spoke connectivity for many VPCs, VPNs, and Direct Connect attachments.
+* **Site-to-Site VPN**: encrypted connectivity over the public internet between AWS and an external network.
+* **Direct Connect**: private dedicated network connectivity from on-premises or colocation environments into AWS.
+* **PrivateLink**: private service access where consumers connect to a service through interface endpoints without full network-level routing between VPCs.
+
+Choosing between these depends on scale, routing needs, segmentation, overlapping CIDRs, cost, and whether consumers need full network access or only access to a specific service.
+
 ### VPC peering
 
 **VPC peering** connects two VPCs so resources can communicate using private IP addresses. It can be same-account, cross-account, same-Region, or cross-Region. After the peering connection is created and accepted, you must update route tables on both sides to send traffic to the peering connection.
@@ -397,7 +488,51 @@ Peering is simple and useful for direct one-to-one VPC connectivity, but it has 
 
 Another important limitation: VPC CIDR ranges must not overlap. If two VPCs both use `10.0.0.0/16`, you cannot route between them correctly through peering. This is why early IP planning matters.
 
-A VPC is the network container. A subnet is AZ-specific. Public/private behavior is controlled mainly by route tables. Security groups protect resources, NACLs protect subnets, and endpoints let private workloads access AWS services privately. VPC peering is direct private connectivity but not transitive.
+Peering also does not provide centralized inspection by itself. If you need many VPCs to share routing, attach to on-premises networks, or use centralized egress and inspection patterns, Transit Gateway is usually the more scalable design.
+
+### Terraform notes for VPCs
+
+In Terraform, a VPC design often includes resources like:
+
+* `aws_vpc`
+* `aws_subnet`
+* `aws_internet_gateway`
+* `aws_nat_gateway`
+* `aws_eip`
+* `aws_route_table`
+* `aws_route`
+* `aws_route_table_association`
+* `aws_security_group`
+* `aws_vpc_endpoint`
+* `aws_flow_log`
+
+Common Terraform mistakes:
+
+* Creating subnets in only one AZ for a workload that should be highly available.
+* Naming a subnet "private" but accidentally associating it with a public route table.
+* Forgetting route table associations, causing subnets to use the main route table.
+* Creating a NAT gateway without a public subnet, Elastic IP, or route to an internet gateway.
+* Creating an interface endpoint but forgetting its security group rules.
+* Using CIDR ranges that overlap with another VPC or on-premises network.
+* Reusing one route table everywhere when public, private, and database subnets need different routes.
+* Forgetting tags, which makes cost allocation and operations harder later.
+
+### Common VPC troubleshooting checklist
+
+When something cannot connect, check the path layer by layer:
+
+* Source subnet route table.
+* Destination subnet route table, if traffic must return.
+* Security group inbound and outbound rules.
+* Network ACL inbound and outbound rules.
+* Public IP or Elastic IP requirements for internet-facing IPv4 access.
+* Internet gateway or NAT gateway attachment and routes.
+* VPC endpoint DNS, endpoint policy, and endpoint security group.
+* DNS resolution and private hosted zone associations.
+* Overlapping CIDRs or missing routes across peering, Transit Gateway, VPN, or Direct Connect.
+* VPC Flow Logs for accepted or rejected traffic.
+
+A VPC is the regional network container. Subnets are AZ-specific placement and routing boundaries. Public/private behavior is controlled mainly by route tables. Security groups protect resources, NACLs protect subnets, and endpoints let private workloads access AWS services privately. VPC peering is direct private connectivity but not transitive. Good VPC design is mostly about IP planning, routing, DNS, security boundaries, and high availability.
 
 ---
 
@@ -473,30 +608,178 @@ The internet gateway is the VPC’s direct path to the public internet, but publ
 
 ## Security group
 
-A **security group** is a stateful virtual firewall attached to AWS resources, usually ENIs, EC2 instances, load balancers, RDS instances, Lambda ENIs, and VPC endpoints. Security groups control allowed inbound and outbound traffic.
+A **security group** is a stateful virtual firewall for AWS resources inside a VPC. It controls allowed inbound and outbound traffic for resources such as EC2 instances, elastic network interfaces, load balancers, RDS instances, ElastiCache clusters, EFS mount targets, Lambda VPC ENIs, ECS tasks, EKS worker nodes, and interface VPC endpoints.
 
-Security groups are **stateful**. If an inbound request is allowed, the response traffic is automatically allowed back, even if there is no explicit outbound rule for the ephemeral response port. This is one of the biggest differences between security groups and NACLs.
+Security groups are associated with **network interfaces**, not with subnets. When people say "the EC2 instance has this security group," that usually means the instance's ENI has that security group attached. This matters because some services create and manage ENIs for you, such as Lambda in a VPC, ECS tasks in `awsvpc` network mode, EKS pods with certain CNI features, RDS, and interface endpoints.
 
-Security groups only support **allow rules**. There are no deny rules. If no rule allows the traffic, the traffic is denied by default. Inbound rules are denied by default. Outbound rules often allow all traffic by default, but this can be restricted.
+Security groups are **stateful**. If a request is allowed in one direction, the response traffic is automatically allowed back. For example, if an EC2 instance is allowed to receive inbound TCP `443` traffic from an ALB, the response traffic back to the ALB is allowed automatically. You do not need to open ephemeral return ports in the security group. This is one of the biggest differences between security groups and NACLs.
+
+Security groups only support **allow rules**. There are no deny rules. If no rule allows the traffic, the traffic is denied by default. Inbound traffic is denied by default. Outbound traffic is often allowed to all destinations by default, but in stricter environments you can remove that default egress rule and define only the destinations the resource needs.
+
+### Security group rule components
 
 A security group rule usually includes:
 
-* Protocol: TCP, UDP, ICMP, or all
-* Port range: for example 22, 80, 443, 5432
-* Source or destination: CIDR block, another security group, prefix list, or sometimes self-reference
+* **Direction**: inbound, also called ingress, or outbound, also called egress.
+* **Protocol**: TCP, UDP, ICMP, ICMPv6, or all traffic.
+* **Port range**: for example `22`, `80`, `443`, `5432`, or a custom range.
+* **Source or destination**: CIDR block, another security group, prefix list, or self-reference.
+* **Description**: a human-readable note explaining why the rule exists.
 
-A powerful AWS feature is referencing another security group as the source. For example, an RDS security group can allow inbound PostgreSQL `5432` only from the application server security group. This is better than allowing an IP range because application instances can scale or change IPs without needing rule changes.
+Inbound rules use a **source**. Outbound rules use a **destination**.
 
-Common patterns:
+Examples:
 
-* ALB security group allows inbound `443` from `0.0.0.0/0`.
-* App EC2 security group allows inbound app port from ALB security group only.
-* RDS security group allows database port from app security group only.
-* Interface VPC endpoint security group allows inbound `443` from application subnets or security groups.
+* Inbound TCP `443` from `0.0.0.0/0` means anyone on the IPv4 internet can attempt HTTPS access.
+* Inbound TCP `5432` from an application security group means only resources with that application security group can attempt PostgreSQL access.
+* Outbound TCP `443` to `0.0.0.0/0` means the resource can attempt HTTPS connections anywhere on the IPv4 internet, assuming routes and NACLs allow it.
+* Outbound TCP `443` to a VPC endpoint security group means the resource can call that endpoint privately.
 
-Common mistakes include opening SSH/RDP to the world, forgetting outbound restrictions, confusing source security group references with subnet-level access, and not realizing a security group is attached to an ENI rather than directly to the subnet.
+Security group rules can also include IPv6 CIDRs such as `::/0`. Do not forget IPv6 when a VPC or subnet has IPv6 enabled. A resource may be locked down for IPv4 but still exposed through an overly broad IPv6 rule.
 
-Security groups are stateful, resource-level, allow-only firewalls. They are usually the first thing to check when an AWS resource cannot connect to another resource. Prefer security group references over broad CIDR ranges when possible.
+### Referencing security groups
+
+A powerful AWS feature is using another security group as the source or destination of a rule. For example, an RDS security group can allow inbound PostgreSQL `5432` only from the application security group. This is usually better than allowing an IP range because application instances, ECS tasks, or EKS nodes can scale and change private IPs without needing rule updates.
+
+Important details about security group references:
+
+* Referencing a security group does not copy the referenced group's rules.
+* It means "resources that have this security group attached."
+* For inbound rules, the referenced security group is the allowed source.
+* For outbound rules, the referenced security group is the allowed destination.
+* Security group references use private IP communication, not public IPs.
+* Self-referencing rules allow resources with the same security group to communicate with each other.
+
+Security group references are common in layered architectures:
+
+* ALB security group allows inbound `443` from the internet.
+* Application security group allows inbound app traffic only from the ALB security group.
+* Database security group allows inbound database traffic only from the application security group.
+* EFS security group allows inbound NFS `2049` from application or worker node security groups.
+* Interface VPC endpoint security group allows inbound `443` from application security groups.
+
+This pattern gives cleaner access control than broad VPC CIDR rules like `10.0.0.0/16`, especially when multiple applications share one VPC.
+
+### Default security group
+
+Every VPC has a **default security group**. By default, it usually allows inbound traffic from resources that are associated with the same default security group and allows all outbound traffic. This is convenient for quick testing, but it is usually too broad for production.
+
+In production, avoid relying on the default security group for application access. Create purpose-specific security groups with clear names and descriptions, such as:
+
+* `alb-public-sg`
+* `app-web-sg`
+* `rds-postgres-sg`
+* `vpce-shared-services-sg`
+
+Good names and rule descriptions matter because security groups become operational documentation. Six months later, you want to know why a port is open without reverse-engineering the whole system.
+
+### Inbound and outbound design
+
+For internet-facing workloads, the public entry point is usually a load balancer, not the application instance directly.
+
+Common web application pattern:
+
+* Public ALB security group: inbound `443` from `0.0.0.0/0` and `::/0` if IPv6 is used.
+* Application security group: inbound application port from the ALB security group only.
+* Database security group: inbound database port from the application security group only.
+* Application outbound: HTTPS to required APIs, VPC endpoints, package mirrors, or internal services.
+
+For private workloads, try to avoid direct SSH or RDP access. Prefer AWS Systems Manager Session Manager, VPN, bastion access with tight controls, or a private connectivity model. If SSH or RDP is required, restrict it to a known admin CIDR or bastion security group, not `0.0.0.0/0`.
+
+Outbound rules deserve attention too. Many teams leave outbound open because it is convenient, but stricter environments may require least-privilege egress. Common controlled egress patterns include:
+
+* Allow outbound `443` to interface endpoint security groups.
+* Allow outbound to AWS-managed prefix lists, such as S3 prefix lists where applicable.
+* Allow outbound to internal service security groups.
+* Route general outbound internet traffic through centralized inspection or NAT.
+
+### Security groups and routing
+
+A security group rule does not create a route. It only allows traffic that can already find a network path.
+
+For a successful connection, you normally need all of these:
+
+* Source security group allows outbound traffic.
+* Destination security group allows inbound traffic.
+* Source subnet route table has a route to the destination.
+* Destination has a return path, unless the traffic is handled by a stateful service path.
+* Network ACLs allow the traffic in both directions.
+* DNS resolves to the address you expect.
+* The application is listening on the expected port.
+
+This is a common troubleshooting trap: the security group can be correct, but the route table, NACL, DNS record, endpoint policy, operating system firewall, or application listener can still block the connection.
+
+### Connection tracking
+
+Because security groups are stateful, AWS tracks allowed connections. Existing tracked flows may continue briefly even after a rule change, depending on the protocol and connection state. This is why changing a security group rule is not always the same as instantly killing every existing connection.
+
+Connection tracking is also why you usually do not need to open ephemeral ports in security groups. NACLs are different because they are stateless and must explicitly allow return traffic.
+
+One unusual edge case: security groups do not block traffic to or from the Amazon-provided DNS resolver for the VPC. If you need DNS filtering, use Route 53 Resolver DNS Firewall or another DNS control instead of expecting a security group rule to block that resolver path.
+
+### Security groups for common AWS services
+
+Different services use security groups in slightly different ways:
+
+* **EC2**: security groups attach to the instance ENI.
+* **ALB**: security groups control who can reach the load balancer and where the load balancer can send traffic.
+* **RDS**: database access is controlled by the DB instance or cluster security group.
+* **EFS**: mount targets need inbound NFS `2049` from clients.
+* **Lambda in a VPC**: Lambda-created ENIs use the selected security groups for outbound access to private resources.
+* **ECS/Fargate**: tasks in `awsvpc` mode get ENIs and security groups.
+* **EKS**: worker nodes and sometimes pods use security groups, depending on configuration.
+* **Interface VPC endpoints**: endpoint ENIs need inbound `443` from the clients that call the service.
+
+For managed services, always think about which side receives the connection. For example, an RDS security group needs inbound database port access from the app, while an interface endpoint security group needs inbound HTTPS from the clients.
+
+### Terraform notes for security groups
+
+In Terraform, security groups are commonly managed with:
+
+* `aws_security_group`
+* `aws_security_group_rule`
+* `aws_vpc_security_group_ingress_rule`
+* `aws_vpc_security_group_egress_rule`
+
+Modern Terraform code often prefers separate ingress and egress rule resources because each rule has its own lifecycle and is easier to change without replacing unrelated rules. Inline rules inside `aws_security_group` can be fine for small examples, but mixing inline rules and separate rule resources for the same security group can create confusing diffs.
+
+Good Terraform practices:
+
+* Use clear names and descriptions for both the security group and the rules.
+* Prefer security group references over broad CIDR ranges for service-to-service traffic.
+* Keep public ingress rules rare and obvious.
+* Model IPv4 and IPv6 rules intentionally.
+* Avoid hardcoding temporary office IPs without a clear process to update them.
+* Use variables or data sources for shared prefix lists when appropriate.
+* Do not accidentally remove the default egress rule unless you are ready to define all required outbound access.
+
+Common Terraform mistakes:
+
+* Allowing `0.0.0.0/0` to SSH `22` or RDP `3389`.
+* Opening a database port to the whole VPC CIDR when only the app tier needs access.
+* Adding a rule to the ALB security group when the real missing rule is on the target security group.
+* Forgetting that an ECS task, Lambda function, or VPC endpoint has its own security group.
+* Creating circular dependencies between security groups and resources.
+* Mixing inline security group rules with standalone rule resources.
+* Forgetting IPv6 exposure through `::/0`.
+
+### Common security group troubleshooting checklist
+
+When a connection fails, check:
+
+* Is the security group attached to the correct ENI or managed service?
+* Does the source security group allow outbound traffic on the right protocol and port?
+* Does the destination security group allow inbound traffic from the right source?
+* Is the source a CIDR, prefix list, or security group reference, and is that the right type?
+* If using a security group reference, does the source resource actually have that security group attached?
+* Are you connecting to a private IP when the rule expects private security group referenced traffic?
+* Is DNS resolving to a public IP when you expected a private IP?
+* Do route tables and NACLs allow the traffic path?
+* Is the operating system firewall blocking the port?
+* Is the application actually listening on the expected interface and port?
+* Did you account for IPv6 rules if IPv6 is enabled?
+
+Security groups are stateful, resource-level, allow-only firewalls. They are usually the first thing to check when an AWS resource cannot connect to another resource, but they are only one layer. Prefer security group references for service-to-service access, keep public ingress narrow, document why each rule exists, and remember that routing, DNS, NACLs, IAM, endpoint policies, and the application itself can still affect connectivity.
 
 ---
 
@@ -1604,13 +1887,6 @@ For API Gateway problems, ask:
 * Correlate API Gateway logs with Lambda/backend logs
 
 API Gateway creates and manages APIs. HTTP APIs are simpler, faster, and often cheaper; REST APIs are more feature-rich; WebSocket APIs support bidirectional persistent connections. Routes map HTTP methods and paths to integrations. GET retrieves, POST creates, PUT/PATCH updates, and DELETE deletes. Stages represent deployed lifecycle environments. Auto deploy controls whether changes go live automatically. Integration URL/URI points to the backend for HTTP/private integrations or to Lambda invocation configuration for Lambda integrations. Most API Gateway problems involve routes, stages, deployment, permissions, CORS, custom domains, backend integration, or Lambda response format.
-
----
-
-# AWS Reference Guide: CloudWatch Logs, Metrics, and Alerts
-
-Audience: DevOps / SRE / Cloud Engineer
-Purpose: practical refresher for interviews, troubleshooting, and day-to-day AWS operations.
 
 ---
 
@@ -2817,37 +3093,231 @@ CloudWatch alarms evaluate metrics or metric math expressions and move between O
 
 ## SQS  Simple Queue Service
 
-**Amazon SQS**, or Simple Queue Service, is a managed message queue. It decouples producers and consumers. Instead of one service directly calling another, the producer sends a message to a queue, and consumers process messages asynchronously.
+**Amazon SQS**, or Simple Queue Service, is a managed message queue. It decouples producers and consumers so services do not have to call each other directly in real time. A producer sends a message to a queue, and one or more consumers process messages asynchronously.
 
-SQS is useful for buffering traffic, smoothing spikes, retrying work, and isolating failures. Example: an API receives upload requests and places processing jobs on SQS. Worker instances or Lambda functions consume the queue at their own pace.
+SQS is useful for buffering traffic, smoothing spikes, retrying work, isolating failures, and building event-driven or worker-based systems. Example: an API receives upload requests and sends processing jobs to SQS. Worker instances, ECS tasks, Kubernetes workers, or Lambda functions consume the queue at their own pace.
 
-Queue types:
+SQS is not a pub/sub service by itself. A message in one SQS queue is normally processed by one consumer, then deleted. If many different systems all need their own copy of the same event, use SNS fanout to multiple SQS queues, EventBridge routing, or another event distribution pattern.
 
-* **Standard queue**: very high throughput, at-least-once delivery, best-effort ordering.
-* **FIFO queue**: first-in-first-out ordering and exactly-once processing behavior in supported conditions, but with more constraints and usually lower throughput than standard queues.
+### Queue types
 
-Important concepts:
+SQS has two main queue types:
 
-* **Visibility timeout**: after a consumer receives a message, the message is hidden from other consumers for a period. If the consumer does not delete it before timeout expires, it becomes visible again
-* **Message retention**: how long SQS keeps messages that are not deleted
-* **Delay queue / message timer**: delay message availability
-* **Dead-letter queue**: stores messages that fail processing too many times
-* **Redrive policy**: controls when messages move to a DLQ, usually using `maxReceiveCount`
-* **Long polling**: reduces empty responses and cost by waiting for messages
+* **Standard queue**: very high throughput, at-least-once delivery, and best-effort ordering.
+* **FIFO queue**: first-in-first-out ordering and exactly-once processing behavior in supported conditions, but with additional requirements around message group IDs and deduplication.
 
-Visibility timeout must be longer than normal processing time. If it is too short, multiple consumers may process the same message. If it is too long, failed messages take longer to retry. Consumers should be idempotent because standard SQS can deliver a message more than once.
+Standard queues are the default choice for most background work because they scale well and are simple. They can deliver a message more than once, and messages can occasionally arrive out of order. Consumers must be **idempotent**, meaning processing the same message more than once should not corrupt data or create duplicate side effects.
 
-watch:
-* `ApproximateNumberOfMessagesVisible`: backlog size
-* `ApproximateAgeOfOldestMessage`: queue delay / stuck work
-* DLQ message count
-* Consumer errors
-* Lambda event source mapping failures if using Lambda
+FIFO queues are used when order matters, such as payment steps, inventory updates, account events, or workflows where operations must be processed in sequence. FIFO ordering is based on **message group ID**. Messages with the same message group ID are processed in order. Different message groups can be processed in parallel.
 
-A queue with rising oldest message age means the system cannot keep up, consumers are failing, or downstream dependencies are slow. Scaling consumers based only on queue depth may not help if the downstream service is the bottleneck.
+FIFO queues also use deduplication:
 
+* **MessageDeduplicationId**: an explicit ID used to detect duplicate sends.
+* **Content-based deduplication**: SQS hashes the message body to generate a deduplication ID.
 
-SQS decouples systems with asynchronous messaging. Know standard vs FIFO, visibility timeout, DLQ, retries, long polling, and idempotent consumers. The most important operational metric is often oldest message age, not just queue depth.
+Deduplication is useful when producers retry `SendMessage` after network timeouts. The important idea is that FIFO helps prevent duplicate messages being introduced into the queue, but your application should still be designed carefully because downstream side effects can still be retried or duplicated outside SQS.
+
+### Producer and consumer flow
+
+A typical SQS flow looks like this:
+
+1. Producer sends a message to the queue.
+2. SQS stores the message until it is received, deleted, or expires.
+3. Consumer calls `ReceiveMessage`.
+4. SQS returns a message and makes it invisible for the visibility timeout.
+5. Consumer processes the message.
+6. Consumer calls `DeleteMessage` using the receipt handle.
+7. If the consumer does not delete the message before the visibility timeout expires, the message becomes visible again and can be retried.
+
+Receiving a message does not remove it from the queue. Deleting the message after successful processing is what completes the work.
+
+### Important SQS concepts
+
+Important settings and concepts:
+
+* **Visibility timeout**: after a consumer receives a message, the message is hidden from other consumers for a period.
+* **Message retention**: how long SQS keeps messages that are not deleted. The default is 4 days, and the maximum is 14 days.
+* **Delay queue**: delays availability of all new messages sent to the queue.
+* **Message timer**: delays availability of an individual message.
+* **Dead-letter queue**: stores messages that fail processing too many times.
+* **Redrive policy**: controls when messages move to a DLQ, usually using `maxReceiveCount`.
+* **Redrive allow policy**: controls which source queues can use a queue as a DLQ.
+* **Long polling**: waits for messages before returning, reducing empty responses and API cost.
+* **Short polling**: returns immediately and may sample only part of the SQS fleet.
+* **In-flight message**: a message that has been received but not yet deleted.
+* **Message attributes**: metadata sent with the message, useful for filtering, tracing, routing, or consumer behavior.
+
+SQS message bodies can be up to 1 MiB. For larger payloads, a common pattern is to store the large object in S3 and send an SQS message containing the S3 bucket/key and metadata. AWS also provides extended client libraries for this pattern.
+
+### Visibility timeout
+
+The **visibility timeout** is one of the most important SQS concepts. When a consumer receives a message, the message remains in the queue but becomes temporarily invisible to other consumers. If processing succeeds, the consumer deletes the message. If the consumer crashes, times out, or fails to delete the message, the message becomes visible again and another consumer can receive it.
+
+The visibility timeout should be longer than normal processing time. If it is too short, two consumers may process the same message. If it is too long, failed messages take longer to retry.
+
+Common visibility timeout patterns:
+
+* Set the queue visibility timeout to a safe default for normal processing.
+* Use `ChangeMessageVisibility` to extend the timeout for long-running jobs.
+* Use a heartbeat pattern where workers periodically extend visibility while work is still active.
+* Set visibility to `0` if a worker wants to give up immediately and let another consumer retry.
+* Move repeatedly failing messages to a DLQ instead of retrying forever.
+
+The default visibility timeout is often 30 seconds, and the maximum is 12 hours from when the message is received. If a job can take longer than that, consider breaking it into smaller steps or using Step Functions.
+
+### Dead-letter queues and retries
+
+A **dead-letter queue**, or DLQ, stores messages that could not be processed successfully after repeated attempts. The source queue's redrive policy controls when messages move to the DLQ.
+
+The key setting is usually:
+
+* `maxReceiveCount`: how many times a message can be received before SQS moves it to the DLQ.
+
+Example: if `maxReceiveCount = 5`, and the consumer receives but fails to delete the same message five times, SQS moves that message to the DLQ.
+
+DLQs are useful because they:
+
+* Prevent poison messages from blocking or wasting consumer capacity.
+* Preserve failed messages for debugging.
+* Let teams inspect payloads, error patterns, and affected customers.
+* Support manual or automated redrive back to the source queue after a fix.
+
+Do not treat a DLQ as a permanent archive. Monitor it, alert on it, and have an operational process for inspecting, fixing, redriving, or discarding messages.
+
+### Long polling
+
+**Long polling** lets a `ReceiveMessage` request wait for messages to arrive instead of returning immediately. This reduces empty responses, lowers API cost, and usually improves consumer efficiency.
+
+Long polling is usually enabled with `ReceiveMessageWaitTimeSeconds` on the queue or `WaitTimeSeconds` on the receive request. The maximum wait time is 20 seconds.
+
+In most real systems, long polling is better than tight short-poll loops. Short polling can waste API calls and return empty responses even when messages exist.
+
+### Lambda and SQS
+
+SQS is commonly used as a Lambda event source. Lambda polls the queue, invokes the function with batches of messages, and deletes messages after successful processing. This pattern is very useful for serverless background work.
+
+Important Lambda plus SQS details:
+
+* The Lambda timeout should be shorter than the SQS visibility timeout.
+* Batch size affects throughput, cost, and retry blast radius.
+* If the function fails the whole batch, messages can become visible again and retry.
+* Partial batch response can report only failed messages so successful messages do not need to be retried.
+* Configure a DLQ or source queue redrive policy for poison messages.
+* Watch concurrency so the queue does not overwhelm downstream systems.
+
+For FIFO queues with Lambda, message group IDs affect concurrency because Lambda must preserve ordering within each group.
+
+### Ordering, duplication, and idempotency
+
+SQS consumers should usually be idempotent. Even with FIFO queues, robust consumers are safer because retries, downstream writes, network errors, and partial failures can still create duplicate side-effect risks.
+
+Common idempotency techniques:
+
+* Include an operation ID, request ID, event ID, or business key in the message.
+* Store processed message IDs in a database with a uniqueness constraint.
+* Make updates naturally idempotent, such as setting a status instead of incrementing blindly.
+* Use conditional writes in DynamoDB.
+* Design external API calls with idempotency keys when supported.
+
+For standard queues, do not depend on strict ordering. If order is required, use FIFO or redesign the workflow so each message can be processed independently.
+
+### SQS with SNS and EventBridge
+
+SQS is often combined with other AWS messaging services:
+
+* **SNS to SQS**: fanout pattern where one SNS topic publishes copies to multiple SQS queues. Each consumer gets its own queue and can retry independently.
+* **EventBridge to SQS**: route events from event buses or SaaS sources into a queue for durable processing.
+* **SQS to Lambda**: queue-backed serverless workers.
+* **SQS with ECS/EC2/EKS workers**: scalable worker fleets that poll and process jobs.
+
+Use SQS when you want durable work queues, backpressure, and retries. Use SNS when you want pub/sub fanout. Use EventBridge when you want event routing, filtering, schema/event bus patterns, or SaaS integrations.
+
+### Security and access control
+
+SQS access is controlled by IAM identity policies and SQS queue resource policies.
+
+Common permissions:
+
+* `sqs:SendMessage` for producers.
+* `sqs:ReceiveMessage`, `sqs:DeleteMessage`, and `sqs:ChangeMessageVisibility` for consumers.
+* `sqs:GetQueueAttributes` and `sqs:GetQueueUrl` for discovery and monitoring.
+
+For encrypted queues, KMS permissions may also be required. A common failure is that IAM allows SQS access but the producer or consumer lacks permission to use the KMS key.
+
+Queue policies are important for cross-account access and service integrations. For example, an SNS topic publishing to SQS often requires an SQS queue policy allowing `sns.amazonaws.com` to call `sqs:SendMessage`, usually with a condition restricting the source topic ARN.
+
+### Monitoring SQS
+
+Important CloudWatch metrics to watch:
+
+* `ApproximateNumberOfMessagesVisible`: backlog size.
+* `ApproximateNumberOfMessagesNotVisible`: in-flight messages.
+* `ApproximateAgeOfOldestMessage`: oldest unprocessed message age.
+* `NumberOfMessagesSent`: producer volume.
+* `NumberOfMessagesReceived`: consumer receive volume.
+* `NumberOfMessagesDeleted`: successful delete activity.
+* `NumberOfEmptyReceives`: wasted polling or not enough available work.
+* DLQ visible message count.
+* Consumer error rate and latency.
+* Lambda event source mapping errors or throttles if using Lambda.
+
+A queue with rising oldest message age usually means the system cannot keep up, consumers are failing, visibility timeout is too long, or downstream dependencies are slow. Scaling consumers based only on queue depth may not help if the downstream database, API, or third-party service is the bottleneck.
+
+Oldest message age is often more important than raw queue depth because it tells you how long work is waiting.
+
+### Terraform notes for SQS
+
+In Terraform, SQS is commonly managed with:
+
+* `aws_sqs_queue`
+* `aws_sqs_queue_policy`
+* `aws_sqs_queue_redrive_policy`
+* `aws_sqs_queue_redrive_allow_policy`
+* `aws_sns_topic_subscription` when subscribing a queue to SNS
+* `aws_lambda_event_source_mapping` when connecting SQS to Lambda
+
+Common Terraform settings:
+
+* `visibility_timeout_seconds`
+* `message_retention_seconds`
+* `delay_seconds`
+* `receive_wait_time_seconds`
+* `max_message_size`
+* `fifo_queue`
+* `content_based_deduplication`
+* `kms_master_key_id`
+* `redrive_policy`
+
+Common Terraform mistakes:
+
+* Creating a FIFO queue without the required `.fifo` queue name suffix.
+* Forgetting `MessageGroupId` when sending to a FIFO queue.
+* Creating a DLQ but not configuring the source queue redrive policy.
+* Setting visibility timeout shorter than Lambda or worker processing time.
+* Forgetting the SQS queue policy for SNS, EventBridge, or cross-account producers.
+* Enabling KMS encryption without granting producers and consumers KMS permissions.
+* Using one shared queue for unrelated workloads that need different scaling, retry, or DLQ behavior.
+* Not setting `receive_wait_time_seconds`, causing inefficient short polling.
+
+### Common SQS troubleshooting checklist
+
+When SQS-backed work is broken or delayed, check:
+
+* Are producers successfully sending messages?
+* Is the consumer polling the correct queue URL and AWS Region?
+* Are messages visible, in flight, delayed, or already in the DLQ?
+* Is the visibility timeout long enough for processing?
+* Are consumers deleting messages after successful processing?
+* Is `maxReceiveCount` too low or too high?
+* Is the DLQ growing?
+* Are IAM permissions and KMS key permissions correct?
+* Is a queue policy missing for SNS, EventBridge, or cross-account access?
+* Is Lambda throttled or failing batches?
+* Are consumers scaled enough, or is a downstream dependency the real bottleneck?
+* For FIFO queues, are message group IDs creating a single hot ordered group?
+* Are messages larger than the queue's maximum message size?
+
+SQS decouples systems with durable asynchronous messaging. Know standard vs FIFO, at-least-once delivery, visibility timeout, DLQs, redrive policies, long polling, Lambda event source behavior, and idempotent consumers. The most important operational metric is often oldest message age, not just queue depth.
 
 ---
 
@@ -3744,69 +4214,539 @@ Cause: key was scheduled and deleted while data still depended on it.
 
 ## 21. AWS Secrets Manager
 
-**AWS Secrets Manager** stores, retrieves, and rotates secrets such as database passwords, API keys, OAuth tokens, and credentials. It is better than storing secrets in code, AMIs, environment files, or plain text CI variables.
+**AWS Secrets Manager** stores, retrieves, manages, and rotates secrets such as database passwords, API keys, OAuth tokens, application credentials, webhook signing secrets, and third-party service credentials. It is much better than storing secrets in source code, AMIs, Docker images, Terraform variables, shell scripts, environment files, or plain text CI variables.
 
-A secret can contain a string, key-value JSON, or binary data. Applications retrieve secrets at runtime using AWS SDKs, CLI, sidecars, or integrations. Access is controlled with IAM and optional resource policies. Secrets are encrypted with KMS.
+A secret can contain a plain string, key-value JSON, or binary data. In practice, JSON is common for database credentials because it can store fields like `username`, `password`, `host`, `port`, `dbname`, and `engine`. Applications retrieve secrets at runtime using AWS SDKs, AWS CLI, sidecars, platform integrations, or service-native integrations.
 
-Secrets Manager supports automatic rotation. For some AWS-managed databases, rotation can be managed more directly. For custom services, rotation often uses a Lambda function. A rotation process must update both the secret value and the actual credential in the target system.
+Secrets Manager is not only encrypted storage. It also provides:
 
-Important operational concept: rotating a secret is not just changing the value stored in AWS. If the database password changes in Secrets Manager but not in the database, the application breaks. Correct rotation coordinates both sides.
+* Secret versioning.
+* Rotation support.
+* IAM and resource-policy based access control.
+* KMS encryption.
+* Cross-account access patterns.
+* Multi-Region secret replication.
+* CloudTrail audit events.
+* Integration with services such as RDS, Redshift, DocumentDB, Lambda, ECS, EKS, and CloudFormation.
 
-Common patterns:
+### Secret structure
 
-* Store RDS credentials.
+A Secrets Manager secret has metadata and one or more secret versions. The metadata includes things like the secret name, ARN, description, tags, KMS key, rotation configuration, replication information, and resource policy. The secret value itself is stored in versions.
+
+Important version labels:
+
+* `AWSCURRENT`: the current active version returned by default.
+* `AWSPREVIOUS`: the previous version after rotation or label movement.
+* `AWSPENDING`: the pending version used during rotation.
+
+Applications usually request the default `AWSCURRENT` version. During rotation, Secrets Manager and the rotation function use staging labels to track which value is pending, current, and previous. This is important for rollback and troubleshooting because a failed rotation can leave useful clues in the version labels.
+
+Secrets Manager does not behave like a normal Git-style history of every value forever. Labeled versions are retained, while old unlabeled versions are eventually considered deprecated and can be removed by the service.
+
+### Access control
+
+Access to a secret usually requires both Secrets Manager permissions and KMS permissions.
+
+Common IAM permissions:
+
+* `secretsmanager:GetSecretValue`: read the secret value.
+* `secretsmanager:DescribeSecret`: read metadata.
+* `secretsmanager:PutSecretValue`: create a new secret version.
+* `secretsmanager:UpdateSecret`: update secret metadata or value.
+* `secretsmanager:RotateSecret`: start rotation.
+* `secretsmanager:DeleteSecret`: schedule deletion.
+* `secretsmanager:RestoreSecret`: restore a scheduled-for-deletion secret.
+
+If the secret uses a customer managed KMS key, the caller may also need:
+
+* `kms:Decrypt` to read the secret value.
+* `kms:Encrypt` or `kms:GenerateDataKey` for writes or rotation.
+* Permission in the KMS key policy, not just the IAM policy.
+
+A very common failure is: the role has `secretsmanager:GetSecretValue`, but the request fails because the KMS key policy does not allow `kms:Decrypt`.
+
+Secrets can also have **resource policies**. Resource policies are useful for cross-account access or service integrations. Be careful with them because a broad resource policy can expose a secret even if identity policies look restrictive. When using resource policies, restrict principals, actions, resources, and conditions as tightly as possible.
+
+### Secrets Manager vs SSM Parameter Store
+
+Secrets Manager and Systems Manager Parameter Store can both store configuration values, but they are usually used differently.
+
+Secrets Manager is usually preferred for:
+
+* Secrets that need automatic rotation.
+* Database credentials.
+* Third-party API keys.
+* Cross-account secret sharing.
+* Secrets requiring stronger lifecycle and audit controls.
+
+SSM Parameter Store is often used for:
+
+* Non-secret application configuration.
+* Simple encrypted parameters.
+* Hierarchical config paths such as `/prod/app/api_url`.
+* Lower-cost or high-volume config reads where rotation is not needed.
+
+This is not a hard rule. The real decision depends on rotation needs, cost, access patterns, audit requirements, and service integrations.
+
+### Rotation
+
+Secrets Manager supports automatic rotation. Rotation means periodically changing the secret value and updating the target system that trusts that secret. For some managed secrets, AWS can manage rotation more directly. For many custom or database secrets, rotation uses a Lambda function.
+
+Important operational concept: rotating a secret is not just changing the value stored in AWS. If the database password changes in Secrets Manager but not in the database, the application breaks. If the database password changes but Secrets Manager still has the old value, the application also breaks. Correct rotation coordinates both sides.
+
+For Lambda-based rotation, the rotation function usually follows four steps:
+
+1. **Create secret**: create a new pending secret value.
+2. **Set secret**: apply the pending credential to the target system.
+3. **Test secret**: verify the pending credential works.
+4. **Finish secret**: move `AWSCURRENT` to the new version and move the old current version to `AWSPREVIOUS`.
+
+Rotation functions must be idempotent because retries can happen. They also need network access to the target system. For example, an RDS rotation Lambda normally must run in a VPC with routes, security groups, and DNS that allow it to reach the database.
+
+Common rotation strategies:
+
+* **Single-user rotation**: update the password for the same user. Simpler, but applications using old credentials may fail during the transition.
+* **Alternating-user rotation**: maintain two users and alternate which one is active. More complex, but can reduce downtime risk.
+* **Custom rotation**: use a Lambda function for APIs, SaaS tokens, legacy systems, or internal services.
+
+Applications must be designed for rotated credentials. If an application reads a secret only once at startup and keeps a database connection pool forever, rotation can still cause failures. Good applications refresh secrets, recycle connections, and handle authentication failures by reloading credentials.
+
+### Rotation schedules
+
+Secrets can rotate on a schedule. Schedules can use rate expressions or cron expressions. Rotation happens during a configured rotation window, similar to a maintenance window.
+
+Useful schedule ideas:
+
+* Rotate database credentials during low-traffic windows.
+* Avoid rotating many critical secrets at exactly the same time.
+* Coordinate rotation windows with application deployment and support coverage.
+* Make rotation frequent enough for security policy but not so frequent that it creates unnecessary operational risk.
+
+Secrets Manager can also rotate a secret immediately if rotation is already configured.
+
+### Retrieving secrets safely
+
+Applications should retrieve secrets at runtime from AWS rather than bundling them into build artifacts. Common access patterns:
+
+* Lambda retrieves a secret during cold start and caches it between invocations.
+* ECS tasks receive secrets through task definition secret injection or call Secrets Manager directly.
+* EKS workloads use IAM roles for service accounts or another identity mechanism to retrieve secrets.
+* EC2 applications use the instance profile role and AWS SDK.
+* CI/CD systems assume a role and read deployment-time secrets only when needed.
+
+Avoid logging secret values. Also avoid printing full environment variables, exception payloads, request bodies, Terraform plan output, or debug dumps that may contain secrets.
+
+### Caching
+
+Calling Secrets Manager on every request is usually unnecessary and can add latency, cost, and dependency risk. Use caching where appropriate.
+
+Good caching behavior:
+
+* Cache secret values in memory for a short TTL.
+* Refresh before or after rotation windows.
+* Reload credentials on authentication failure.
+* Use AWS-provided caching libraries when they fit the language/runtime.
+* Do not cache forever unless the application is restarted as part of every rotation.
+
+Caching must be balanced with rotation. A long cache TTL can keep old credentials alive after rotation, while no caching can increase API cost and make the application more sensitive to transient AWS API issues.
+
+### Encryption and KMS
+
+Secrets Manager encrypts secret values with KMS. You can use the AWS managed key for Secrets Manager or a customer managed KMS key.
+
+Use a customer managed key when you need:
+
+* More control over key policy.
+* Cross-account access.
+* Separate keys per environment or workload.
+* Detailed KMS audit and lifecycle controls.
+* Explicit grants for service roles or rotation functions.
+
+KMS adds another permission layer. To read a secret encrypted with a customer managed key, the principal needs Secrets Manager permission and KMS decrypt permission. For cross-account access, the secret resource policy, IAM policy, and KMS key policy all need to line up.
+
+### Networking and VPC endpoints
+
+Applications in private subnets can reach Secrets Manager through a NAT gateway or through an interface VPC endpoint for Secrets Manager. For stricter private-network designs, the VPC endpoint pattern is common.
+
+For a Secrets Manager interface endpoint, check:
+
+* Private DNS is enabled if applications use the normal regional Secrets Manager hostname.
+* The endpoint security group allows inbound `443` from the application security group or subnet CIDR.
+* The application subnet has working DNS.
+* The endpoint policy allows the required Secrets Manager actions.
+* KMS access also works, possibly through a KMS VPC endpoint if there is no NAT.
+
+A private workload may successfully reach Secrets Manager but fail to decrypt the secret if KMS connectivity or permissions are missing.
+
+### Common patterns
+
+Common Secrets Manager patterns:
+
+* Store RDS, Aurora, Redshift, or DocumentDB credentials.
 * Store third-party API tokens.
+* Store OAuth client secrets.
+* Store webhook signing secrets.
 * Store application signing keys.
-* Lambda retrieves secrets at cold start or per request.
-* ECS/EKS inject secrets into tasks or pods.
+* Store credentials used by CI/CD deployment roles.
+* Let Lambda retrieve secrets at cold start and refresh on failure.
+* Inject secrets into ECS task containers.
+* Let EKS workloads retrieve secrets through AWS identity rather than static Kubernetes secrets where appropriate.
+* Share a secret cross-account with a tightly scoped resource policy.
 
-Common mistakes:
+Do not use one giant shared secret for unrelated services. Separate secrets by application, environment, and access boundary so IAM can stay precise.
 
-* Application reads secret once and never refreshes it after rotation.
-* IAM role lacks `secretsmanager:GetSecretValue`.
-* IAM role has Secrets Manager permission but lacks KMS decrypt permission.
-* Secret policy allows too broad access.
-* Secrets are logged accidentally.
-* Rotation Lambda fails silently or lacks network access to the database.
+### Monitoring and auditing
 
-For SRE monitoring, track rotation failures, CloudTrail access patterns, secret age, and application errors after rotation windows.
+For SRE and security monitoring, track:
+
+* Rotation failures.
+* Secrets without rotation when policy requires rotation.
+* Secrets that have not been accessed for a long time.
+* Secrets accessed by unexpected roles.
+* Failed `GetSecretValue` calls.
+* KMS `AccessDenied` errors.
+* Secret deletion scheduling.
+* Resource policy changes.
+* KMS key policy changes.
+* Application errors after rotation windows.
+
+CloudTrail records Secrets Manager API calls, including reads such as `GetSecretValue`. Be careful with logs and events: CloudTrail records API activity, but secret values should not be logged by your application or tooling.
+
+Useful alarms and reports:
+
+* Rotation Lambda errors.
+* Rotation Lambda duration and timeout.
+* DLQ messages for custom rotation workflows, if used.
+* Secrets scheduled for deletion.
+* High rate of failed secret reads.
+* Application authentication failures after rotation.
+
+### Terraform notes for Secrets Manager
+
+In Terraform, Secrets Manager is commonly managed with:
+
+* `aws_secretsmanager_secret`
+* `aws_secretsmanager_secret_version`
+* `aws_secretsmanager_secret_policy`
+* `aws_secretsmanager_secret_rotation`
+* `aws_kms_key`
+* `aws_kms_alias`
+* `aws_iam_policy`
+* `aws_vpc_endpoint` for private Secrets Manager access
+
+Important Terraform warning: if you put secret values directly in Terraform configuration, variables, or `aws_secretsmanager_secret_version`, those values can end up in Terraform state. Terraform state must be treated as sensitive and stored securely, usually in an encrypted remote backend with strict access control.
+
+Common Terraform practices:
+
+* Manage the secret container with Terraform.
+* Avoid hardcoding secret values in `.tf` files.
+* Use secure pipelines or one-time processes to populate secret values.
+* Mark variables as `sensitive = true`, but remember this does not remove values from state.
+* Use customer managed KMS keys when access control requires it.
+* Add tags for owner, environment, application, and rotation expectations.
+* Be careful with deletion windows and recovery behavior.
+* Avoid frequent Terraform updates to secret versions if applications or rotation processes manage values.
+
+Common Terraform mistakes:
+
+* Committing secret values to Git.
+* Storing secrets in local state files.
+* Assuming `sensitive = true` means the value is not stored anywhere.
+* Creating a secret but forgetting the KMS key permissions.
+* Creating rotation but forgetting Lambda permissions or VPC access.
+* Replacing secret versions unexpectedly and breaking active credentials.
+* Forgetting resource policies for cross-account reads.
+* Using one secret for multiple unrelated workloads.
+
+### Common Secrets Manager troubleshooting checklist
+
+When an application cannot read or use a secret, check:
+
+* Does the role have `secretsmanager:GetSecretValue` on the correct secret ARN?
+* Does the role have `kms:Decrypt` on the KMS key?
+* Does the KMS key policy allow that principal or account?
+* Is the application using the correct Region?
+* Is the secret scheduled for deletion?
+* Is the application requesting the correct version stage, usually `AWSCURRENT`?
+* Is a resource policy blocking or allowing the wrong principal?
+* Is the VPC endpoint reachable from the private subnet?
+* Does the VPC endpoint policy allow the action?
+* Is DNS resolving the Secrets Manager endpoint correctly?
+* Is the secret JSON schema what the application expects?
+* Was the secret rotated but the application cache or connection pool still uses the old value?
+* Did rotation update both Secrets Manager and the target system?
+* Did the rotation Lambda have network access and IAM/KMS permissions?
+* Are secret values accidentally being logged?
 
 ### SRE / interview summary
 
-Secrets Manager stores and rotates secrets securely. Access requires IAM and sometimes KMS permissions. Rotation must update both Secrets Manager and the target service. Applications should handle refreshed credentials safely and never log secrets.
+Secrets Manager stores and rotates secrets securely. Access requires IAM and often KMS permissions. Secret versions use staging labels such as `AWSCURRENT`, `AWSPREVIOUS`, and `AWSPENDING`. Rotation must update both Secrets Manager and the target database or service. Applications should retrieve secrets safely, cache them thoughtfully, handle rotation, and never log secret values.
 
 ---
 
 ## 22. AWS ACM
 
-**AWS Certificate Manager**, or ACM, provisions and manages SSL/TLS certificates for AWS services. It is commonly used with Application Load Balancers, Network Load Balancers, CloudFront, API Gateway, and other AWS integrations.
+**AWS Certificate Manager**, or ACM, provisions, stores, renews, imports, exports in supported cases, and manages SSL/TLS certificates for AWS services. It is commonly used to enable HTTPS for Application Load Balancers, Network Load Balancers, CloudFront, API Gateway, App Runner, Elastic Beanstalk, and other AWS integrations.
 
-ACM certificates are used to enable HTTPS. For public certificates, ACM must validate domain ownership. Common validation methods include DNS validation and email validation. DNS validation is usually preferred because it supports automatic renewal more reliably when the DNS record remains in place.
+ACM helps remove a lot of certificate operational work. Instead of manually generating private keys, creating CSRs, buying certificates, installing certificate chains, and tracking expiration dates, you can request or import certificates and attach them to supported AWS resources.
 
-Important CloudFront detail: certificates used with CloudFront distributions must be in `us-east-1`, even if the distribution serves global users and the origin is in another Region. Certificates for ALB and regional API Gateway usually live in the same Region as the resource.
+ACM manages several certificate types:
 
-Certificate lifecycle:
+* **Public ACM certificates**: publicly trusted certificates issued by Amazon for public domain names.
+* **Private certificates**: certificates issued from AWS Private CA for internal/private PKI use cases.
+* **Imported certificates**: certificates issued outside ACM and imported for use with ACM-integrated services.
+* **Exportable public certificates**: ACM public certificates that can be exported and installed outside integrated AWS services, if they were created as exportable certificates.
 
-1. Request certificate for one or more domain names.
-2. Validate domain ownership.
-3. Attach certificate to ALB, CloudFront, API Gateway, etc.
-4. ACM handles managed renewal if eligible.
-5. Monitor renewal status and validation records.
+### What ACM is used for
 
-Common issues:
+ACM certificates are used to secure TLS connections. Common uses:
 
-* DNS validation CNAME missing or deleted.
-* Certificate requested in the wrong Region.
-* Domain name on certificate does not match the hostname users access.
-* CloudFront still using old certificate due to distribution deployment time.
-* Imported certificates are not automatically renewed by ACM in the same way as ACM-issued public certs.
-* Private certificates require ACM Private CA or private PKI integration.
+* Public HTTPS on an Application Load Balancer.
+* HTTPS on CloudFront distributions.
+* Custom domains for API Gateway.
+* TLS on Network Load Balancers.
+* Internal TLS for private services using private certificates.
+* Centralized certificate management for workloads that need exported certificates.
 
-For SRE, certificate expiration is a major preventable incident. Use DNS validation, do not delete validation records, monitor certificate expiry, and automate infrastructure with Terraform/CloudFormation when possible.
+ACM does not host your website by itself. It only manages certificates. You still need a service such as ALB, CloudFront, API Gateway, or another TLS endpoint to use the certificate.
+
+### Public certificates
+
+Public ACM certificates are trusted by common browsers and clients. To issue one, ACM must validate that you control the domain name.
+
+Common validation methods:
+
+* **DNS validation**: create CNAME records in DNS to prove domain ownership.
+* **Email validation**: approve validation emails sent to domain contacts or standard admin addresses.
+
+DNS validation is usually preferred because it is easier to automate and supports managed renewal more reliably when the validation records remain in place. Email validation can work, but it is easier to miss renewal emails or lose access to the mailbox.
+
+Public certificates can include:
+
+* A single domain, such as `example.com`.
+* Subject alternative names, such as `www.example.com` and `api.example.com`.
+* Wildcards, such as `*.example.com`.
+
+Wildcard certificates only cover one label level. For example, `*.example.com` covers `app.example.com`, but not `dev.app.example.com`.
+
+### Regional rules
+
+ACM certificates are regional resources. This is one of the most important ACM interview and troubleshooting points.
+
+Important Region behavior:
+
+* Certificates for **CloudFront** must be in `us-east-1`, because CloudFront uses ACM certificates from US East, N. Virginia.
+* Certificates for **ALB**, **NLB**, and most regional services must be in the same Region as the service.
+* If you use ALBs in multiple Regions, you usually need a certificate in each Region.
+* Imported certificates must also be imported into every Region where they are needed.
+
+A very common mistake is requesting a certificate in the application Region and then trying to attach it to CloudFront. For CloudFront, request or import the certificate in `us-east-1`.
+
+### Certificate lifecycle
+
+Typical ACM public certificate lifecycle:
+
+1. Request a certificate for one or more domain names.
+2. Choose DNS or email validation.
+3. Complete domain validation.
+4. Wait for ACM to issue the certificate.
+5. Attach the certificate to an integrated service.
+6. Keep validation records in place.
+7. Let ACM handle managed renewal when eligible.
+8. Monitor certificate status and expiration.
+
+The certificate must match the hostname that users actually access. If users visit `api.example.com`, the certificate needs `api.example.com` or a matching wildcard such as `*.example.com`.
+
+### DNS validation
+
+With DNS validation, ACM gives you one or more CNAME records. You add those records to the authoritative DNS zone for the domain. If the domain is hosted in Route 53, Terraform or the console can often create these records automatically.
+
+Important DNS validation details:
+
+* The validation record must be in the correct public hosted zone.
+* The domain's registrar must point to the correct authoritative nameservers.
+* Do not delete validation CNAME records after issuance.
+* DNS propagation and wrong hosted zones are common causes of stuck validation.
+* Wildcard and apex names may reuse the same validation record in some cases.
+
+Leaving DNS validation records in place is important because ACM can use them again for managed renewal.
+
+### Email validation
+
+With email validation, ACM sends approval emails to domain contacts or standard addresses such as administrator/admin-style addresses for the domain. Someone must approve the request.
+
+Email validation is less automation-friendly because:
+
+* Mailboxes can be unmonitored.
+* WHOIS privacy can make contacts unreliable.
+* Renewal notices can be missed.
+* Infrastructure automation cannot fully complete validation alone.
+
+For production infrastructure, DNS validation is usually the cleaner choice.
+
+### Managed renewal
+
+ACM can provide managed renewal for eligible ACM-issued certificates. If the certificate is attached to an integrated AWS service and validation remains valid, renewal can happen without manual reinstallation.
+
+Managed renewal depends on the certificate type and deployment pattern:
+
+* Public ACM certificates with DNS validation are usually the easiest to renew automatically.
+* Email-validated certificates may require responding to renewal emails.
+* Imported certificates are not automatically renewed by ACM. You must obtain a new certificate and reimport it.
+* Private certificates from AWS Private CA can be eligible for managed renewal when requested through ACM.
+* Exported certificates may renew in ACM, but you still need a process to deploy the renewed certificate to the external server or application.
+
+For SRE work, certificate expiration is a major preventable incident. Monitor expiration even when managed renewal is expected. Automation can fail because of deleted DNS validation records, wrong DNS zones, service disassociation, or permission issues.
+
+### Imported certificates
+
+ACM can import certificates that were issued outside ACM. This is useful when:
+
+* Your organization uses a third-party certificate authority.
+* You need a certificate type or policy not issued directly by ACM.
+* You are migrating existing certificates into AWS-managed integrations.
+
+Imported certificates require the certificate body, private key, and certificate chain in supported PEM formats. The private key must match the certificate.
+
+Important imported certificate behavior:
+
+* ACM does not provide managed renewal for imported certificates.
+* You are responsible for tracking expiration.
+* To preserve existing AWS service associations, reimport a renewed certificate into the same ACM certificate ARN when possible.
+* Imported certificates are regional.
+* For CloudFront, import into `us-east-1`.
+
+Imported certificates are powerful but operationally risky if nobody owns renewal.
+
+### Exportable certificates
+
+Historically, ACM public certificates were mainly used with integrated AWS services and the private key could not be exported. ACM now supports exportable public certificates in supported cases. Exportable certificates can be useful for EC2 instances, containers, on-premises hosts, or software that needs direct access to certificate files.
+
+Important exportable certificate points:
+
+* Exporting includes the certificate, certificate chain, and encrypted private key.
+* The exported private key must be protected carefully.
+* You need a deployment process for renewed exported certificates.
+* Exportable public certificates can have different pricing and lifecycle considerations than standard integrated-service ACM certificates.
+* Public ACM certificates created before June 17, 2025 cannot be exported.
+
+If the certificate is only needed on ALB, CloudFront, or API Gateway, prefer using ACM directly with the integrated service instead of exporting and managing private keys yourself.
+
+### Private certificates and AWS Private CA
+
+ACM integrates with AWS Private CA for private certificates. Private certificates are used for internal services, mutual TLS, service-to-service encryption, corporate devices, internal APIs, and private PKI use cases.
+
+Important private certificate points:
+
+* Private certificates are not publicly trusted by browsers unless clients trust your private CA root.
+* You may need to distribute the private CA root certificate to clients.
+* AWS Private CA has its own cost and security considerations.
+* Private CA permissions matter, especially for renewal and cross-account issuance.
+* Private certificates can be associated with some ACM-integrated services or exported depending on the use case.
+
+Private certificates are good for internal trust. Public ACM certificates are good for public internet trust.
+
+### Service integrations
+
+Common ACM integrations:
+
+* **Application Load Balancer**: HTTPS listeners use ACM certificates.
+* **Network Load Balancer**: TLS listeners can use ACM certificates.
+* **CloudFront**: viewer certificates must be in `us-east-1`.
+* **API Gateway**: custom domains use ACM certificates.
+* **App Runner**: custom domains can use ACM-managed certificates through the service flow.
+* **Elastic Beanstalk**: environments can use ACM certificates through load balancers.
+
+ACM certificates cannot be attached to every service in every way. Always check whether the target service supports ACM certificates, imported certificates, RSA/ECDSA key types, and the Region you are using.
+
+### Security and IAM
+
+ACM protects private keys for certificates used with integrated services. For standard ACM-managed public certificates attached to AWS services, you do not directly handle the private key.
+
+Security considerations:
+
+* Restrict who can request, import, export, delete, or renew certificates.
+* Be especially careful with `acm:ExportCertificate` because it can expose private keys for exportable certificates.
+* Use least-privilege IAM for Terraform and CI/CD roles.
+* Tag certificates with owner, environment, application, and renewal responsibility.
+* Protect Route 53 permissions because DNS validation depends on DNS control.
+* Monitor certificate deletion and export events in CloudTrail.
+
+TLS security also depends on the service configuration. For example, an ALB listener's security policy controls allowed TLS versions and ciphers. ACM provides the certificate, but the load balancer or service controls many TLS negotiation details.
+
+### Terraform notes for ACM
+
+In Terraform, ACM is commonly managed with:
+
+* `aws_acm_certificate`
+* `aws_acm_certificate_validation`
+* `aws_route53_record` for DNS validation records
+* `aws_lb_listener` or `aws_lb_listener_certificate`
+* `aws_cloudfront_distribution`
+* `aws_api_gateway_domain_name`
+* Provider aliases for `us-east-1` CloudFront certificates
+
+Common Terraform pattern for DNS validation:
+
+1. Create `aws_acm_certificate` with `validation_method = "DNS"`.
+2. Create Route 53 validation records from `domain_validation_options`.
+3. Create `aws_acm_certificate_validation`.
+4. Attach the validated certificate ARN to ALB, CloudFront, or API Gateway.
+
+Common Terraform mistakes:
+
+* Creating a CloudFront certificate outside `us-east-1`.
+* Forgetting to use a provider alias for `us-east-1`.
+* Creating validation records in the wrong hosted zone.
+* Deleting DNS validation CNAME records after issuance.
+* Attaching the certificate before validation completes.
+* Replacing a certificate unnecessarily because SAN ordering or domain lists changed.
+* Forgetting `create_before_destroy` and causing certificate downtime.
+* Not reimporting renewed imported certificates into the same ARN.
+* Not monitoring imported certificate expiration.
+
+Useful Terraform lifecycle setting:
+
+* `create_before_destroy = true` on certificates can help avoid downtime when a replacement certificate is needed.
+
+### Monitoring and operations
+
+For operations, monitor:
+
+* Certificate expiration dates.
+* Renewal eligibility and renewal status.
+* Failed renewal events.
+* Missing DNS validation records.
+* Certificates not attached to any service.
+* Imported certificates approaching expiration.
+* CloudFront distributions still deploying a certificate change.
+* CloudTrail events for certificate import, export, delete, and renewal actions.
+
+EventBridge can be used to react to ACM events, such as approaching expiration or renewal state changes. For imported or exported certificates, monitoring matters even more because ACM may not be able to deploy renewed material automatically.
+
+### Common ACM troubleshooting checklist
+
+When a certificate is not issued, not attaching, or not working:
+
+* Is the certificate in the correct Region?
+* For CloudFront, is the certificate in `us-east-1`?
+* Is the certificate status `ISSUED`?
+* Are DNS validation CNAME records present in the authoritative public hosted zone?
+* Is the domain registrar pointing to the nameservers for that hosted zone?
+* Does the certificate cover the exact hostname users access?
+* Is a wildcard being used for a hostname it does not cover?
+* Is the certificate attached to the correct listener, distribution, or custom domain?
+* Is CloudFront still deploying the distribution change?
+* Is the client seeing an old certificate because of DNS or CDN propagation?
+* For imported certificates, is the chain complete and in the correct order?
+* For imported certificates, does the private key match the certificate?
+* Is the certificate expired or close to expiration?
+* Did someone delete DNS validation records needed for renewal?
+* Are IAM permissions blocking Terraform or service attachment?
 
 ### SRE / interview summary
 
-ACM manages TLS certificates. DNS validation is preferred for automatic renewal. ALB certs are regional; CloudFront certs must be in `us-east-1`. Most certificate incidents are caused by wrong Region, missing DNS validation, or hostname mismatch.
+ACM manages TLS certificates for AWS services. DNS validation is preferred for automation and renewal. ALB and most regional service certificates must be in the same Region as the service; CloudFront certificates must be in `us-east-1`. Imported certificates are not automatically renewed by ACM. Most ACM incidents come from wrong Region, missing DNS validation, hostname mismatch, deleted validation records, incomplete certificate chains, or unmanaged imported certificate expiration.
 
 ---
 
@@ -3944,5 +4884,1063 @@ Common issues:
 ### SRE / interview summary
 
 CloudFront is a CDN. Distribution routes viewer requests to origins through cache behaviors. OAC protects private S3 origins. Cache policies and cache keys are critical: they control performance, correctness, and origin load.
+
+---
+
+## 25. AWS Organizations
+
+**AWS Organizations** is an account management and governance service for managing multiple AWS accounts centrally. It lets you group accounts, apply organization-wide policies, consolidate billing, create new accounts, invite existing accounts, and delegate administration of supported AWS services.
+
+In real AWS environments, multiple accounts are normal. Instead of putting every workload into one large account, teams often separate accounts by environment, workload, business unit, or security boundary. For example:
+
+* `management` or payer account
+* `security` account
+* `log-archive` account
+* `shared-services` or networking account
+* `dev`, `staging`, and `prod` workload accounts
+* Sandbox accounts
+
+This separation improves blast-radius control, cost tracking, IAM boundaries, service quota management, and incident response.
+
+### Core concepts
+
+Important AWS Organizations terms:
+
+* **Organization**: the overall container for centrally managed AWS accounts.
+* **Management account**: the account that created and owns the organization.
+* **Member account**: any account that belongs to the organization but is not the management account.
+* **Root**: the top-level container in the organization hierarchy.
+* **Organizational unit**, or **OU**: a grouping of accounts under the root or under another OU.
+* **Policy**: a governance rule attached to the root, OUs, or accounts.
+* **Delegated administrator**: a member account allowed to manage an AWS service for the organization.
+
+The management account is very powerful. It pays the bill, creates or invites accounts, moves accounts between OUs, enables service integrations, attaches organization policies, and registers delegated administrators. Because of this, production resources should usually not run in the management account.
+
+### OUs and account structure
+
+An **OU** groups accounts so you can manage them as a unit. Policies attached to an OU apply to accounts inside that OU and usually to accounts inside child OUs.
+
+Common OU patterns:
+
+* **Security OU**: accounts for security tooling, audit, and log archive.
+* **Infrastructure OU**: networking, shared services, CI/CD, and platform accounts.
+* **Workloads OU**: application accounts, often split into prod and non-prod.
+* **Sandbox OU**: experimentation accounts with stricter cost and permission limits.
+* **Suspended OU**: closed, quarantined, or inactive accounts.
+
+Good OU design is based on governance needs, not only team names. If two sets of accounts need different controls, they may belong in different OUs.
+
+### Consolidated billing
+
+AWS Organizations provides **consolidated billing**. The management account pays charges for member accounts, and billing data can be viewed across the organization.
+
+Benefits:
+
+* One central bill for the organization.
+* Easier cost allocation by account, tag, workload, or environment.
+* Shared volume pricing benefits where AWS supports them.
+* Reserved Instance and Savings Plans discount sharing, depending on billing settings.
+* Better separation between workload ownership and payment administration.
+
+Account-level cost visibility is one of the biggest practical reasons to use multiple accounts. A separate production account, for example, makes it much easier to understand production cost than trying to separate everything with tags inside one account.
+
+### Service control policies
+
+**Service control policies**, or **SCPs**, are organization-level permission guardrails. They define the maximum permissions available to IAM users and roles in member accounts.
+
+The most important SCP rule: **SCPs do not grant permissions**. They only limit permissions. A principal still needs IAM permissions in the account. Effective permissions are the intersection of:
+
+* What identity policies allow.
+* What resource policies allow, where applicable.
+* What permission boundaries and session policies allow, if used.
+* What SCPs allow.
+* What resource control policies allow, if used.
+* Any explicit denies.
+
+Example: if a user has `AdministratorAccess` in a member account, but an SCP denies `ec2:TerminateInstances`, that user still cannot terminate EC2 instances.
+
+Common SCP uses:
+
+* Deny disabling CloudTrail, AWS Config, GuardDuty, or Security Hub.
+* Deny leaving the organization.
+* Restrict access to approved AWS Regions.
+* Deny deleting critical log buckets.
+* Deny changing account-level security settings.
+* Deny creating public S3 buckets.
+* Deny use of services that are not approved.
+
+SCPs apply to member accounts, including the root user of a member account. SCPs do **not** restrict users or roles in the management account. This is a major reason to keep the management account locked down and mostly empty.
+
+### SCP allow and deny strategy
+
+There are two common SCP strategies:
+
+* **Deny list**: start from broad access and explicitly deny dangerous actions.
+* **Allow list**: allow only approved services or actions and implicitly deny everything else.
+
+Deny-list SCPs are easier to adopt and less likely to break workloads unexpectedly. Allow-list SCPs are stricter but require much more testing because new services and actions are denied until explicitly allowed.
+
+Important SCP gotcha: do not remove the AWS-managed `FullAWSAccess` SCP unless you replace it carefully. Without an allow path, actions in member accounts can fail broadly.
+
+Best practice: test SCPs in a small OU before attaching them to production OUs or the organization root.
+
+### Resource control policies
+
+AWS Organizations also supports **resource control policies**, or **RCPs**, for supported use cases. SCPs are principal-focused guardrails, while RCPs are resource-focused guardrails. In simple terms:
+
+* SCPs limit what principals in member accounts can do.
+* RCPs limit access to resources in member accounts.
+
+For many interviews and day-to-day tasks, SCPs are the main Organizations policy type people discuss. But it is useful to know that Organizations policy capabilities are broader than SCPs.
+
+### Delegated administrators and trusted access
+
+Many AWS services integrate with AWS Organizations. Instead of managing every service from the management account, you can enable trusted access and designate a **delegated administrator** member account.
+
+Common delegated administrator patterns:
+
+* Security account administers GuardDuty, Security Hub, IAM Access Analyzer, Macie, Detective, Inspector, or Firewall Manager.
+* Log archive account receives centralized CloudTrail and Config logs.
+* Audit account has read-only visibility into organization security posture.
+* Network account manages shared networking, depending on design.
+
+Delegated administration reduces day-to-day use of the management account. The management account should be reserved for organization-level tasks that truly require it.
+
+### AWS Control Tower relationship
+
+**AWS Control Tower** is built on top of AWS Organizations and related services. Organizations gives you the core account hierarchy and policy engine. Control Tower adds a managed landing zone, account factory, guardrails, baseline configuration, and lifecycle workflows.
+
+Simple comparison:
+
+* **AWS Organizations**: account hierarchy, billing, policies, integrations.
+* **AWS Control Tower**: opinionated multi-account landing zone built using Organizations and other AWS services.
+
+You can use Organizations without Control Tower. Many companies do. Control Tower is useful when you want AWS to orchestrate more of the landing-zone setup and account vending process.
+
+### Multi-account best practices
+
+Common best practices:
+
+* Keep the management account highly restricted and mostly empty.
+* Use IAM Identity Center for human access across accounts.
+* Use separate accounts for production and non-production.
+* Use a dedicated security account for security tooling.
+* Use a dedicated log archive account for immutable or centralized logs.
+* Use SCPs as broad guardrails, not as a replacement for IAM.
+* Standardize account naming, email ownership, tags, and contact information.
+* Enable organization-wide CloudTrail, AWS Config, GuardDuty, Security Hub, and IAM Access Analyzer where appropriate.
+* Use cross-account roles for automation and deployments.
+* Have a clear account vending process for creating new accounts.
+
+The main idea is blast-radius reduction. A mistake in a sandbox account should not be able to delete production logs or change organization-wide security controls.
+
+### Account creation and lifecycle
+
+Organizations can create new AWS accounts programmatically or through the console. New accounts can then be moved into OUs and receive inherited policies.
+
+Account lifecycle topics:
+
+* Account creation and bootstrapping.
+* Baseline IAM roles and access.
+* Required security services.
+* Logging and monitoring setup.
+* Network configuration.
+* Budget and cost controls.
+* Moving accounts between OUs.
+* Closing or suspending unused accounts.
+
+When accounts are created through automation, the first bootstrapping step often creates a cross-account admin or deployment role so platform tooling can finish setup.
+
+### Security and compliance
+
+Organizations is central to AWS governance. It helps enforce controls across accounts that individual account administrators cannot easily bypass.
+
+Examples:
+
+* Require CloudTrail to stay enabled.
+* Prevent deletion of log archive buckets.
+* Restrict workloads to approved Regions.
+* Prevent root account usage in member accounts through monitoring and alerting.
+* Enable security services across all accounts.
+* Use centralized Config rules and aggregators.
+* Use centralized IAM Access Analyzer.
+* Use delegated security administration.
+
+Organizations is not a complete security solution by itself. It works with IAM, CloudTrail, AWS Config, GuardDuty, Security Hub, KMS, S3 bucket policies, permission boundaries, and account-level controls.
+
+### Terraform notes for AWS Organizations
+
+In Terraform, AWS Organizations is commonly managed with:
+
+* `aws_organizations_organization`
+* `aws_organizations_organizational_unit`
+* `aws_organizations_account`
+* `aws_organizations_policy`
+* `aws_organizations_policy_attachment`
+* `aws_organizations_delegated_administrator`
+* `aws_organizations_resource_policy`
+
+Common Terraform practices:
+
+* Manage organization structure from a dedicated infrastructure or management workspace.
+* Be careful with account creation because AWS account lifecycle operations can be slow and partially asynchronous.
+* Keep SCP JSON in version control and review changes carefully.
+* Test SCP changes in a non-production OU first.
+* Avoid large, complicated SCPs when smaller policies are clearer.
+* Use `jsonencode()` or policy documents to avoid invalid JSON.
+* Use provider aliases and cross-account roles for bootstrapping member accounts.
+* Do not casually move accounts between OUs because inherited policies can change immediately.
+
+Common Terraform mistakes:
+
+* Attaching a restrictive SCP to the root without testing.
+* Forgetting that SCPs do not grant access.
+* Forgetting that SCPs do not affect the management account.
+* Removing `FullAWSAccess` without a replacement allow model.
+* Creating accounts manually and then struggling to import them cleanly into Terraform state.
+* Assuming account creation is instant.
+* Running workload resources in the management account.
+* Applying OU changes without understanding inherited policies.
+
+
+---
+
+## 26. AWS WAF and Shield
+
+**AWS WAF** and **AWS Shield** are AWS edge and application protection services. They are often used together, but they solve different problems.
+
+* **AWS WAF** is a web application firewall for HTTP and HTTPS traffic.
+* **AWS Shield** is DDoS protection for AWS resources.
+
+WAF is about inspecting web requests and blocking suspicious application-layer traffic. Shield is about protecting availability during denial-of-service attacks.
+
+### AWS WAF
+
+AWS WAF lets you create a **web ACL**, or web access control list, and attach it to supported resources such as CloudFront distributions, Application Load Balancers, API Gateway REST APIs, AppSync GraphQL APIs, Cognito user pools, App Runner services, Amplify apps, and Verified Access instances.
+
+A web ACL contains rules. Rules inspect requests and take actions such as:
+
+* **Allow**: let the request through.
+* **Block**: reject the request.
+* **Count**: evaluate the rule but do not block.
+* **CAPTCHA** or **Challenge**: require extra client verification in supported cases.
+
+Common WAF rule types:
+
+* AWS managed rule groups for common threats.
+* IP allow lists or block lists.
+* Geo match rules.
+* Header, cookie, query string, URI path, or body inspection.
+* SQL injection and cross-site scripting matching.
+* Rate-based rules to limit request floods.
+* Bot Control or Fraud Control features when needed.
+
+Good practice: start new rules in **count mode** before blocking. This helps you see what would be blocked without breaking real users.
+
+### AWS Shield
+
+AWS Shield protects against DDoS attacks. There are two levels:
+
+* **Shield Standard**: automatic DDoS protection included for AWS customers at no extra charge.
+* **Shield Advanced**: paid advanced DDoS protection with extra detection, mitigation, visibility, cost protection features, and access to the AWS Shield Response Team for eligible cases.
+
+Shield Standard helps protect against common network and transport layer attacks. Shield Advanced is used for higher-risk public applications, especially important CloudFront distributions, Route 53 hosted zones, Global Accelerator accelerators, Elastic IPs, and load balancers.
+
+For application-layer DDoS attacks, Shield Advanced often works with AWS WAF. WAF rules can block or rate-limit bad HTTP traffic, while Shield provides DDoS detection and response features.
+
+### Common architecture pattern
+
+For internet-facing web applications:
+
+* Route 53 points the domain to CloudFront or an ALB.
+* CloudFront sits in front of the origin when global edge protection and caching are useful.
+* AWS WAF web ACL is attached to CloudFront or ALB.
+* AWS managed WAF rules block common web exploits.
+* Rate-based rules slow down abusive clients.
+* Shield Standard is always present.
+* Shield Advanced is added for critical production systems with DDoS risk.
+
+WAF is most effective when the origin cannot be bypassed. For example, with CloudFront plus an ALB origin, restrict the ALB so users cannot directly hit it and avoid WAF/CloudFront.
+
+### Monitoring and logging
+
+Monitor:
+
+* WAF blocked requests.
+* WAF counted requests before enabling block mode.
+* Rate-based rule matches.
+* Top blocked IPs, countries, paths, and user agents.
+* CloudFront or ALB 4xx and 5xx rates.
+* Origin latency and error rate.
+* Shield events and DDoS metrics for protected resources.
+
+WAF logs can be sent to destinations such as CloudWatch Logs, S3, or Kinesis Data Firehose, depending on configuration. Logs are useful for tuning false positives and understanding attack patterns.
+
+### Terraform notes
+
+In Terraform, WAF and Shield commonly use:
+
+* `aws_wafv2_web_acl`
+* `aws_wafv2_web_acl_association`
+* `aws_wafv2_ip_set`
+* `aws_wafv2_regex_pattern_set`
+* `aws_wafv2_rule_group`
+* `aws_shield_protection`
+* `aws_shield_subscription`
+
+Common mistakes:
+
+* Creating a CloudFront WAF web ACL in the wrong scope. CloudFront uses `CLOUDFRONT` scope and is managed from `us-east-1`.
+* Enabling block mode before checking false positives.
+* Forgetting to associate the web ACL with the resource.
+* Assuming WAF protects non-HTTP traffic.
+* Leaving the origin publicly reachable and bypassable.
+* Not enabling logs, making tuning difficult.
+* Assuming Shield Advanced protects every resource automatically; resources must be configured for protection.
+
+---
+
+## 27. AWS Cost Explorer and Trusted Advisor
+
+**AWS Cost Explorer** and **AWS Trusted Advisor** are operational visibility tools. Cost Explorer helps you understand AWS spend. Trusted Advisor inspects your AWS environment and recommends improvements across cost, security, performance, fault tolerance, service quotas, and operational excellence.
+
+### AWS Cost Explorer
+
+**Cost Explorer** is used to analyze AWS cost and usage over time. It helps answer questions like:
+
+* Which service is driving this month's bill?
+* Which account, Region, tag, or usage type changed?
+* How much are we forecasted to spend?
+* Did a deployment or workload change increase cost?
+* Are Reserved Instances or Savings Plans helping?
+
+Cost Explorer supports filtering and grouping by dimensions such as service, linked account, Region, usage type, purchase option, tag, and cost category. In AWS Organizations, the management account can view consolidated cost data across member accounts.
+
+Common Cost Explorer uses:
+
+* Monthly cost review.
+* Service-level cost breakdowns.
+* Forecasting future spend.
+* Finding cost spikes.
+* Checking Savings Plans and Reserved Instance coverage.
+* Reviewing rightsizing recommendations for EC2.
+* Building chargeback or showback views using tags and cost categories.
+
+Cost Explorer is not real-time. Cost and usage data can lag, so use CloudWatch metrics or service-specific dashboards for immediate operational signals.
+
+### AWS Trusted Advisor
+
+**AWS Trusted Advisor** checks your AWS environment and provides recommendations. The main categories are:
+
+* Cost optimization.
+* Performance.
+* Security.
+* Fault tolerance.
+* Service limits or service quotas.
+* Operational excellence.
+
+Examples of Trusted Advisor findings:
+
+* Idle or underused resources.
+* Exposed security groups.
+* MFA not enabled on root.
+* Service quota usage approaching limits.
+* Missing fault-tolerance configuration.
+* Opportunities to reduce cost.
+
+Trusted Advisor access depends on the AWS Support plan. All accounts get access to selected core checks. Broader check access and API access require eligible paid support plans such as Business Support+, Enterprise Support, or Unified Operations.
+
+### How they work together
+
+Cost Explorer shows where money is going. Trusted Advisor points out specific improvement opportunities.
+
+Example workflow:
+
+1. Cost Explorer shows EC2 cost increased in `prod`.
+2. Group by usage type, Region, account, or tag to isolate the source.
+3. Trusted Advisor or Compute Optimizer highlights idle or oversized instances.
+4. Engineering reviews whether the recommendation is safe.
+5. After cleanup, Cost Explorer confirms the cost trend improved.
+
+Do not blindly apply cost recommendations. A resource that looks idle may be a standby, disaster recovery component, batch worker, or seasonal system.
+
+### Monitoring and operations
+
+Good FinOps habits:
+
+* Review Cost Explorer weekly or monthly.
+* Use AWS Budgets for alerts.
+* Use cost allocation tags consistently.
+* Create cost categories for teams, products, or environments.
+* Review Trusted Advisor cost and security findings regularly.
+* Track recommendations to owners, not just dashboards.
+* Watch service quota findings before launches or traffic events.
+
+### Terraform notes
+
+Cost Explorer and Trusted Advisor are mostly visibility services, not infrastructure that you heavily build with Terraform. Terraform is more often used for supporting controls:
+
+* `aws_budgets_budget`
+* `aws_ce_anomaly_monitor`
+* `aws_ce_anomaly_subscription`
+* IAM policies for billing, Cost Explorer, Support, and Trusted Advisor access.
+* Consistent resource tagging for cost allocation.
+
+Common mistakes:
+
+* Not tagging resources, making cost allocation hard.
+* Looking only at total bill instead of grouping by account, service, Region, and tag.
+* Ignoring forecasted spend until the invoice arrives.
+* Treating Trusted Advisor recommendations as automatically safe.
+* Not having the right Support plan for full Trusted Advisor checks or API access.
+* Forgetting that cost data can lag.
+
+---
+
+## 28. Amazon ElastiCache
+
+**Amazon ElastiCache** is a managed in-memory data store used for caching, fast lookups, sessions, rate limits, leaderboards, queues, and temporary application state. It helps reduce database load and improve latency by keeping frequently used data in memory.
+
+ElastiCache supports:
+
+* **Valkey**: open-source Redis-compatible engine, commonly used for new Redis-style workloads.
+* **Redis OSS**: Redis-compatible in-memory data store.
+* **Memcached**: simpler distributed cache for key-value caching.
+
+Valkey and Redis OSS support richer data structures, replication, persistence options, pub/sub, sorted sets, streams, and more advanced cache patterns. Memcached is simpler and often used for straightforward ephemeral caching.
+
+### Common use cases
+
+* Cache database query results.
+* Store application sessions.
+* Store rate-limit counters.
+* Speed up expensive API responses.
+* Cache authentication or authorization lookups.
+* Store short-lived feature flags or config.
+* Implement leaderboards or counters.
+
+ElastiCache is usually placed in private subnets. Applications connect over the VPC using security groups. For Valkey or Redis OSS, the default port is often `6379`; for Memcached, the default port is often `11211`.
+
+### High availability and scaling
+
+For Valkey and Redis OSS, production clusters often use replication groups with Multi-AZ and automatic failover. A primary node handles writes, and replicas can handle reads and failover. Cluster mode can shard data across node groups for larger datasets or higher throughput.
+
+Important design points:
+
+* Use Multi-AZ for important production caches.
+* Size memory with headroom to avoid evictions.
+* Understand your eviction policy.
+* Use TTLs so stale cache entries expire.
+* Design the app to survive cache misses or cache failover.
+* Do not treat cache as the only copy of critical durable data unless the architecture explicitly accepts that risk.
+
+### Security
+
+ElastiCache security usually involves:
+
+* Private subnet placement.
+* Security groups allowing only application clients.
+* Encryption in transit, meaning TLS.
+* Encryption at rest where supported.
+* Redis/Valkey AUTH, RBAC users, or IAM authentication where supported.
+* KMS keys for encryption at rest when customer managed keys are required.
+
+IAM authentication for Valkey and Redis OSS uses short-lived IAM authentication tokens and requires TLS. For many apps, Redis/Valkey AUTH or RBAC is still common.
+
+### Monitoring and troubleshooting
+
+Watch:
+
+* CPU utilization.
+* Memory usage and freeable memory.
+* Evictions.
+* Cache hit ratio.
+* Current connections.
+* Replication lag.
+* Network bytes in/out.
+* Engine-specific errors.
+
+Common problems:
+
+* Security group does not allow client access.
+* App is in a subnet or VPC that cannot route to the cache.
+* Cache memory fills up and starts evicting useful keys.
+* Hot keys overload one shard.
+* TTLs are missing or too long.
+* Client connection pool is too small or too large.
+* App treats cache as durable storage and loses data during failover.
+
+### Terraform notes
+
+Common Terraform resources:
+
+* `aws_elasticache_subnet_group`
+* `aws_elasticache_replication_group`
+* `aws_elasticache_cluster`
+* `aws_elasticache_parameter_group`
+* `aws_elasticache_user`
+* `aws_elasticache_user_group`
+
+Common mistakes:
+
+* Putting ElastiCache in public subnets.
+* Forgetting subnet groups.
+* Opening cache ports too broadly.
+* Not enabling Multi-AZ for production.
+* Under-sizing memory and causing evictions.
+* Trying to enable some encryption settings after creation when replacement or migration is required.
+
+---
+
+## 29. Amazon Cognito
+
+**Amazon Cognito** provides identity features for web and mobile applications. It is commonly used for user sign-up, sign-in, password reset, MFA, social login, enterprise federation, JWT tokens, and temporary AWS credentials for authenticated users.
+
+Cognito has two main parts:
+
+* **User pools**: user directories and authentication for applications.
+* **Identity pools**: federate authenticated users into temporary AWS credentials through IAM roles.
+
+Simple rule: user pools answer "who is the user?" Identity pools answer "what AWS credentials can this user get?"
+
+### User pools
+
+A **user pool** is a managed user directory. It can store users, passwords, attributes, groups, MFA settings, app clients, domains, and federation settings. From an application perspective, a user pool can act as an OIDC identity provider and issue JWTs.
+
+Common user pool features:
+
+* Sign-up and sign-in.
+* Email and phone verification.
+* Password policies.
+* MFA with SMS, email, TOTP, and newer passwordless options where supported.
+* Hosted UI or managed login.
+* Social identity providers such as Google, Apple, Facebook, and Amazon.
+* SAML and OIDC enterprise federation.
+* Lambda triggers for custom authentication, validation, migration, and token customization.
+* Groups and custom attributes.
+
+Important tokens:
+
+* **ID token**: identity information about the user.
+* **Access token**: authorization scopes and group claims for APIs.
+* **Refresh token**: used to get new tokens without signing in again.
+
+APIs often validate Cognito JWTs using API Gateway authorizers, ALB authentication, application middleware, or custom JWT validation.
+
+### Identity pools
+
+An **identity pool** can exchange an authenticated identity for temporary AWS credentials. It can work with Cognito user pools, social identity providers, SAML/OIDC providers, or developer-authenticated identities.
+
+Identity pools are useful when a client app needs direct, limited access to AWS resources, such as:
+
+* Uploading a file to S3.
+* Calling AppSync.
+* Reading a scoped DynamoDB item.
+* Publishing to IoT Core.
+
+Be careful: identity pools give AWS credentials to clients. IAM roles must be tightly scoped.
+
+### Security and operations
+
+Good Cognito practices:
+
+* Use strong password policies and MFA where appropriate.
+* Use custom domains and HTTPS for production login flows.
+* Keep app client callback and logout URLs strict.
+* Do not put app client secrets in browser or mobile apps.
+* Validate JWT issuer, audience/client ID, expiration, and signature.
+* Use groups or custom claims carefully for authorization.
+* Monitor failed sign-ins, account takeover signals, and unusual traffic.
+* Understand SMS/email delivery limits and configuration.
+
+Common mistakes:
+
+* Confusing user pools with identity pools.
+* Using ID tokens where access tokens are expected.
+* Trusting JWT claims without validating the signature.
+* Over-permissive identity pool IAM roles.
+* Wrong callback URL or OAuth flow settings.
+* Forgetting hosted UI domain configuration.
+* Relying only on Cognito groups for complex authorization logic.
+
+### Terraform notes
+
+Common Terraform resources:
+
+* `aws_cognito_user_pool`
+* `aws_cognito_user_pool_client`
+* `aws_cognito_user_pool_domain`
+* `aws_cognito_user_group`
+* `aws_cognito_identity_pool`
+* `aws_cognito_identity_pool_roles_attachment`
+* `aws_lambda_permission` for Cognito triggers
+
+Cognito changes can affect live authentication flows, so review Terraform plans carefully. Some settings are hard to change after creation, and app client changes can break login flows if callback URLs, OAuth scopes, or token settings are wrong.
+
+---
+
+## 30. AWS EKS
+
+**Amazon EKS**, or Elastic Kubernetes Service, is AWS's managed Kubernetes service. AWS manages the Kubernetes control plane, while you manage the workloads, worker capacity, Kubernetes add-ons, networking, IAM integration, upgrades, observability, and application reliability.
+
+EKS is used when teams want Kubernetes APIs and ecosystem tooling without running the Kubernetes control plane themselves.
+
+### EKS architecture model
+
+```text
+AWS account / Region
++-- VPC
+    +-- Public subnets
+    |   +-- NAT gateways
+    |   +-- Internet-facing load balancers
+    +-- Private subnets
+    |   +-- EKS worker nodes or Fargate pods
+    |   +-- Application pods
+    +-- EKS cluster
+        +-- AWS-managed control plane
+        |   +-- API server
+        |   +-- etcd
+        |   +-- scheduler
+        |   +-- controller manager
+        +-- Data plane
+            +-- Managed node groups
+            +-- Self-managed nodes
+            +-- Fargate profiles
+```
+
+The control plane is highly available and managed by AWS. The data plane is where your pods run. Data plane capacity can be EC2-backed nodes, Fargate, or a mix depending on the workload.
+
+### Main AWS resources in EKS
+
+| AWS resource | Purpose |
+|---|---|
+| **EKS cluster** | Managed Kubernetes control plane |
+| **VPC** | Network boundary for the cluster |
+| **Subnets** | Where nodes, pods, and load balancers run |
+| **Security groups** | Firewall rules for control plane, nodes, and load balancers |
+| **IAM roles** | Permissions for cluster, nodes, add-ons, and pods |
+| **EC2 instances** | Worker nodes when using node groups |
+| **Auto Scaling Groups** | Backing capacity for managed/self-managed node groups |
+| **EBS volumes** | Persistent block storage for pods |
+| **EFS file systems** | Shared file storage for pods |
+| **ALB/NLB** | Exposes Kubernetes services and ingress traffic |
+| **CloudWatch** | Logs, metrics, Container Insights, and alarms |
+| **ECR** | Stores container images |
+| **Route 53** | DNS records for applications |
+| **KMS** | Encryption for Kubernetes secrets and volumes |
+
+### Control plane vs data plane
+
+```text
+AWS manages                         You manage
+-----------                         ----------
+EKS control plane                   Worker nodes / Fargate
+API server                          Pods
+etcd                                Deployments, Services, Ingress
+scheduler                           Add-ons
+controller manager                  IAM and RBAC mappings
+control plane availability          Application availability
+```
+
+AWS handles the Kubernetes control plane availability, but that does not automatically make your application highly available. Your workloads still need enough replicas, multiple AZs, healthy nodes, correct disruption budgets, and working dependencies.
+
+### Basic request flow
+
+```text
+User
+-> Route 53 DNS
+-> AWS load balancer: ALB or NLB
+-> Kubernetes Ingress or Service
+-> Pod
+-> Application container
+```
+
+Example:
+
+```text
+api.example.com
+-> ALB
+-> Ingress
+-> Service
+-> Deployment pods
+```
+
+The AWS Load Balancer Controller commonly creates ALBs from Kubernetes `Ingress` objects and NLBs from Kubernetes `Service` objects.
+
+### Important EKS add-ons
+
+| Add-on | Kubernetes component | Purpose |
+|---|---|---|
+| **VPC CNI** | `aws-node` DaemonSet | Gives pods IPs from the VPC |
+| **CoreDNS** | `coredns` Deployment | Kubernetes DNS |
+| **kube-proxy** | `kube-proxy` DaemonSet | Service networking |
+| **EBS CSI Driver** | CSI controller/node pods | Mounts EBS volumes into pods |
+| **EFS CSI Driver** | CSI controller/node pods | Mounts EFS file systems into pods |
+| **AWS Load Balancer Controller** | Deployment | Creates ALB/NLB resources |
+| **Cluster Autoscaler** | Deployment | Adds/removes EC2 nodes based on pending pods |
+| **Karpenter** | Controller | Provisions right-sized nodes quickly |
+| **Metrics Server** | Deployment | Enables `kubectl top` and HPA CPU/memory scaling |
+| **ExternalDNS** | Deployment | Creates Route 53 DNS records |
+| **Fluent Bit / CloudWatch Agent** | DaemonSet | Sends logs and metrics to CloudWatch |
+| **Prometheus/Grafana** | Deployments/StatefulSets | Monitoring dashboards and alerting |
+| **cert-manager** | Deployment | Manages Kubernetes TLS certificates |
+
+Some add-ons can be installed as EKS managed add-ons. Others are commonly installed with Helm, Kubernetes manifests, or GitOps tooling.
+
+### Add-ons mapped to Kubernetes resources
+
+| Add-on | Kubernetes resources usually created |
+|---|---|
+| VPC CNI | `DaemonSet/aws-node`, `ServiceAccount`, `ClusterRole` |
+| CoreDNS | `Deployment/coredns`, `Service/kube-dns`, `ConfigMap` |
+| kube-proxy | `DaemonSet/kube-proxy`, `ConfigMap` |
+| EBS CSI Driver | `Deployment/ebs-csi-controller`, `DaemonSet/ebs-csi-node`, `CSIDriver`, `StorageClass` |
+| AWS Load Balancer Controller | `Deployment`, `ServiceAccount`, `IngressClass`, `TargetGroupBinding` |
+| Metrics Server | `Deployment`, `APIService`, `Service` |
+| Cluster Autoscaler | `Deployment`, `ServiceAccount`, `ClusterRole` |
+| Karpenter | `Deployment`, `ServiceAccount`, `NodePool`, `EC2NodeClass` |
+| ExternalDNS | `Deployment`, `ServiceAccount`, `ClusterRole` |
+| Fluent Bit | `DaemonSet`, `ConfigMap`, `ServiceAccount` |
+| Prometheus | `StatefulSet/Deployment`, `ServiceMonitor`, `PrometheusRule`, `PVC` |
+| Grafana | `Deployment`, `Service`, `ConfigMap`, `Secret` |
+| cert-manager | `Deployments`, `Issuer`, `ClusterIssuer`, `Certificate` |
+
+### Networking model
+
+```text
+VPC
++-- Public subnet AZ-a
+|   +-- ALB / NAT gateway
++-- Public subnet AZ-b
+|   +-- ALB / NAT gateway
++-- Private subnet AZ-a
+|   +-- Worker node
+|       +-- Pod IP from VPC CIDR
+|       +-- Pod IP from VPC CIDR
++-- Private subnet AZ-b
+    +-- Worker node
+        +-- Pod IP from VPC CIDR
+        +-- Pod IP from VPC CIDR
+```
+
+With the AWS VPC CNI, pods usually get real VPC IP addresses.
+
+```text
+Pod IP = VPC IP
+```
+
+This is different from many Kubernetes environments where pod IPs come from an overlay network. In EKS, subnet sizing matters because pods consume VPC IPs. A cluster can fail to schedule pods even when EC2 nodes exist if the subnets are out of available IP addresses.
+
+Important networking notes:
+
+* Use private subnets for worker nodes in most production clusters.
+* Use public subnets for internet-facing ALBs/NLBs and NAT gateways.
+* Tag subnets correctly so the AWS Load Balancer Controller can discover them.
+* Private clusters may need VPC endpoints for EKS, ECR API, ECR Docker, S3, STS, CloudWatch Logs, KMS, and other AWS services.
+* The EKS API endpoint can be public, private, or both.
+
+### IAM and Kubernetes access
+
+```text
+IAM role for EKS cluster
+-> Allows EKS to manage cluster control plane operations
+
+IAM role for node group
+-> Allows EC2 nodes to join the cluster, pull ECR images, and write logs
+
+IAM role for service account / Pod Identity
+-> Allows individual pods to access AWS services
+```
+
+EKS has two access layers:
+
+* **AWS IAM** controls who can authenticate to the EKS API and call AWS APIs.
+* **Kubernetes RBAC** controls what users and service accounts can do inside the cluster.
+
+For pod access to AWS services, prefer pod-level IAM instead of broad permissions on the node role.
+
+Common pod identity patterns:
+
+* **IRSA**, or IAM Roles for Service Accounts.
+* **EKS Pod Identity**, where available and appropriate.
+
+Example:
+
+```text
+external-dns pod
+-> Kubernetes service account
+-> IRSA or Pod Identity role
+-> Route 53 permissions
+```
+
+Common IAM users:
+
+| Component | AWS permission needed |
+|---|---|
+| AWS Load Balancer Controller | ALB/NLB, target groups, security groups |
+| ExternalDNS | Route 53 |
+| EBS CSI Driver | EBS volumes and snapshots |
+| EFS CSI Driver | EFS mount targets and access points |
+| Cluster Autoscaler | Auto Scaling Groups and EC2 |
+| Karpenter | EC2, pricing, launch templates, and IAM pass role |
+| Fluent Bit | CloudWatch Logs |
+| cert-manager | Route 53 DNS validation, optional |
+
+### Storage model
+
+```text
+Pod
+-> PersistentVolumeClaim
+-> StorageClass
+-> CSI driver
+-> AWS storage resource
+```
+
+Common storage choices:
+
+* **EBS**: block storage for one pod/node attachment pattern. EBS volumes are AZ-specific.
+* **EFS**: shared file storage that can be mounted by many pods across AZs.
+* **S3**: object storage accessed by the application SDK, not a normal POSIX filesystem.
+
+For EBS-backed pods, the scheduler must place the pod in the same AZ as the EBS volume. During AZ failure or rescheduling, this can matter a lot. Stateful workloads need careful topology, backup, and failover design.
+
+### Scaling model
+
+EKS scaling has several layers:
+
+* **Horizontal Pod Autoscaler**, or HPA, scales pod replicas.
+* **Vertical Pod Autoscaler**, or VPA, recommends or changes pod resource requests.
+* **Cluster Autoscaler** adds/removes nodes when pods cannot schedule.
+* **Karpenter** provisions right-sized nodes based on pending pods.
+* **Managed node group scaling** controls EC2 minimum, maximum, and desired capacity.
+
+Important scaling gotcha: pod CPU and memory requests must be realistic. Kubernetes schedules based on requests, not actual usage. Bad requests lead to poor bin packing, pending pods, node pressure, or surprise cost.
+
+### Common production EKS layout
+
+```text
+EKS cluster
++-- kube-system
+|   +-- aws-node
+|   +-- coredns
+|   +-- kube-proxy
+|   +-- ebs-csi-driver
+|   +-- metrics-server
++-- ingress
+|   +-- aws-load-balancer-controller
++-- monitoring
+|   +-- prometheus
+|   +-- grafana
+|   +-- alertmanager
++-- logging
+|   +-- fluent-bit
++-- cert-manager
+|   +-- cert-manager pods
++-- application namespaces
+    +-- dev
+    +-- staging
+    +-- production
+```
+
+Production clusters should usually include:
+
+* Multiple AZs.
+* Multiple node groups or node pools.
+* Pod disruption budgets for important services.
+* Topology spread constraints or pod anti-affinity.
+* Centralized logging and metrics.
+* Least-privilege IAM for add-ons and workloads.
+* Upgrade plan for Kubernetes, node AMIs, and add-ons.
+
+### Operations and troubleshooting
+
+Watch:
+
+* Pods stuck `Pending`.
+* Pods in `CrashLoopBackOff`.
+* Node `NotReady`.
+* CoreDNS failures.
+* VPC CNI IP allocation errors.
+* ALB/NLB target health.
+* Image pull errors from ECR.
+* Cluster Autoscaler or Karpenter events.
+* CPU, memory, and disk pressure.
+
+Useful commands:
+
+* `kubectl get nodes`
+* `kubectl get pods -A`
+* `kubectl describe pod <pod>`
+* `kubectl logs <pod>`
+* `kubectl get events -A --sort-by=.lastTimestamp`
+* `kubectl describe node <node>`
+
+Common EKS incidents:
+
+* Nodes cannot join because the node IAM role, bootstrap, security group, or endpoint access is wrong.
+* Pods cannot start because ECR access, image tags, or pull secrets are wrong.
+* Pods cannot call AWS APIs because IRSA or Pod Identity is misconfigured.
+* Services are unreachable because load balancer controller permissions or subnet tags are wrong.
+* Pods cannot schedule because the cluster is out of node capacity or subnet IPs.
+* DNS fails because CoreDNS is unhealthy or overloaded.
+
+### Terraform notes
+
+Common Terraform resources:
+
+* `aws_eks_cluster`
+* `aws_eks_node_group`
+* `aws_eks_addon`
+* `aws_iam_openid_connect_provider`
+* `aws_iam_role`
+* `aws_iam_role_policy_attachment`
+* `aws_security_group`
+* `aws_subnet`
+
+Many teams use the community `terraform-aws-eks` module because production EKS has many connected resources.
+
+Common Terraform mistakes:
+
+* Creating subnets that are too small for pod IP usage.
+* Forgetting subnet tags for load balancers.
+* Giving node roles broad permissions instead of using pod-level IAM.
+* Not planning add-on versions before cluster upgrades.
+* Upgrading the control plane without upgrading node groups and add-ons.
+* Not enabling enough logs, metrics, and alerts for troubleshooting.
+
+---
+
+## Interview Scenario: Availability Zone Failure
+
+Question: An AWS Availability Zone goes down. How should your system be designed to handle this, and what would you check during the incident?
+
+Your system should be designed so **one AZ failure does not take the service down**.
+
+### Design expectations
+
+1. **Run across multiple AZs**
+
+   * EC2, EKS, or ECS workloads should run across at least 2-3 AZs.
+   * Auto Scaling Groups, node groups, and service subnets should span multiple AZs.
+
+2. **Use load balancers across AZs**
+
+   * ALB or NLB should route traffic only to healthy targets.
+   * Health checks should remove failed AZ targets automatically.
+   * Cross-zone load balancing should be understood and configured intentionally.
+
+3. **Use Multi-AZ databases**
+
+   * RDS Multi-AZ should be used for automatic failover.
+   * Aurora should have instances across multiple AZs.
+   * Read replicas can help read scaling, but they are not a replacement for Multi-AZ failover design.
+
+4. **Avoid single-AZ dependencies**
+
+   * NAT gateways, caches, EBS volumes, internal services, worker nodes, and deployment tooling should not all depend on one AZ.
+   * For NAT, a common production pattern is one NAT gateway per AZ with private subnets routed to the local NAT gateway.
+
+5. **Keep enough capacity in remaining AZs**
+
+   * Healthy AZs should have enough capacity to absorb traffic after one AZ is lost.
+   * Autoscaling should be able to add capacity quickly, but the system should not rely only on slow scale-out during an outage.
+
+### Incident checks
+
+1. **Confirm the scope**
+
+   * Check AWS Health Dashboard.
+   * Identify the affected AZ and services.
+   * Confirm whether the issue is one AZ, one service, one VPC, or the application itself.
+
+2. **Check load balancer health**
+
+   * Review `HealthyHostCount`.
+   * Review `UnHealthyHostCount`.
+   * Review `TargetResponseTime`.
+   * Review ALB/NLB `4xx` and `5xx` metrics.
+   * Confirm traffic is shifting away from unhealthy targets.
+
+3. **Check application capacity**
+
+   * Check CPU, memory, latency, error rate, and request count by AZ.
+   * Confirm remaining instances, pods, or tasks are not overloaded.
+   * Scale out in healthy AZs if needed.
+
+4. **Check database failover**
+
+   * For RDS, verify whether failover happened successfully.
+   * Check database connections, latency, locks, and error rates.
+   * Confirm the application reconnect behavior is working.
+
+5. **Check AZ-specific dependencies**
+
+   * NAT gateways.
+   * ElastiCache or Redis nodes.
+   * EBS-backed workloads.
+   * Internal services.
+   * Worker queues and consumers.
+   * Private endpoints or network appliances.
+
+6. **Reduce impact**
+
+   * Disable traffic to the bad AZ if needed.
+   * Scale out in healthy AZs.
+   * Pause non-critical jobs.
+   * Increase retry backoff if systems are recovering.
+   * Communicate status and mitigation steps.
+
+### Interview-style answer
+
+"I would design the system active-active across multiple AZs, with load balancers, autoscaling, Multi-AZ databases, and no single-AZ dependencies. During the incident, I would confirm the affected AZ, check load balancer target health, verify traffic has moved to healthy AZs, make sure remaining capacity is enough, and confirm database failover and dependent services are healthy."
+
+---
+
+## Interview Scenario: AWS Bill Spike
+
+Question: Your AWS bill suddenly spikes overnight. How would you identify the cause?
+
+Start by identifying **what changed, where the cost is coming from, and whether the spend is still increasing**.
+
+### Investigation steps
+
+1. **Use Cost Explorer**
+
+   * Compare yesterday, today, week-to-date, and month-to-date spend.
+   * Group by service, linked account, Region, usage type, tag, and cost category.
+   * Look for one service or account that changed sharply.
+
+2. **Check usage breakdown**
+
+   * Look at usage quantity, not only dollars.
+   * Common spike sources include EC2, NAT gateway data processing, inter-AZ data transfer, CloudWatch Logs, S3 requests, EBS snapshots, RDS, Lambda invocations, and data transfer out.
+
+3. **Review recent changes**
+
+   * Check deployments, Terraform applies, autoscaling events, batch jobs, migrations, and new logging changes.
+   * Review CloudTrail for resource creation or configuration changes.
+
+4. **Look for runaway resources**
+
+   * EC2 instances left running.
+   * EBS volumes or snapshots accumulating.
+   * NAT gateway traffic spike.
+   * CloudWatch logs ingesting too much data.
+   * Lambda retry loops.
+   * S3 lifecycle rules missing or misconfigured.
+   * Autoscaling misconfiguration.
+
+5. **Stop or contain the spend**
+
+   * Disable runaway jobs.
+   * Scale down accidental capacity.
+   * Add temporary rate limits.
+   * Reduce excessive logs.
+   * Fix retry loops.
+   * Notify owners and document the cause.
+
+### Interview-style answer
+
+"I would start in Cost Explorer and group spend by service, account, Region, usage type, and tags to find what changed. Then I would correlate the spike with recent deployments, autoscaling events, CloudTrail activity, and service metrics. Common causes are runaway EC2, NAT/data transfer, CloudWatch Logs, snapshots, Lambda retries, or misconfigured autoscaling. After identifying the source, I would contain the spend, notify the owner, and add a budget or anomaly alert to catch it earlier next time."
 
 ---
