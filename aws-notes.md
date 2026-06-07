@@ -5944,3 +5944,62 @@ Start by identifying **what changed, where the cost is coming from, and whether 
 "I would start in Cost Explorer and group spend by service, account, Region, usage type, and tags to find what changed. Then I would correlate the spike with recent deployments, autoscaling events, CloudTrail activity, and service metrics. Common causes are runaway EC2, NAT/data transfer, CloudWatch Logs, snapshots, Lambda retries, or misconfigured autoscaling. After identifying the source, I would contain the spend, notify the owner, and add a budget or anomaly alert to catch it earlier next time."
 
 ---
+
+        {
+            "Effect": "Allow",
+            "Action": [
+                "elasticloadbalancing:ModifyLoadBalancerAttributes",
+                "elasticloadbalancing:SetIpAddressType",
+                "elasticloadbalancing:SetSecurityGroups",
+                "elasticloadbalancing:SetSubnets",
+                "elasticloadbalancing:DeleteLoadBalancer",
+                "elasticloadbalancing:ModifyTargetGroup",
+                "elasticloadbalancing:ModifyTargetGroupAttributes",
+                "elasticloadbalancing:DeleteTargetGroup",
+                "elasticloadbalancing:ModifyListenerAttributes",
+                "elasticloadbalancing:ModifyCapacityReservation",
+                "elasticloadbalancing:ModifyIpPools"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "Null": {
+                    "aws:ResourceTag/elbv2.k8s.aws/cluster": "false"
+                }
+            }
+        },
+
+In this IAM policy condition, `Null` checks whether a condition key exists.
+
+```json
+"Condition": {
+  "Null": {
+    "aws:ResourceTag/elbv2.k8s.aws/cluster": "false"
+  }
+}
+```
+
+This means:
+
+> Allow this action only if the resource tag `elbv2.k8s.aws/cluster` is **not null**, meaning the tag exists on the resource.
+
+The slightly confusing part is the `"false"` value. Read it like this:
+
+```text
+Is aws:ResourceTag/elbv2.k8s.aws/cluster null? false
+```
+
+So AWS evaluates:
+
+```text
+The tag must exist.
+```
+
+In this policy, it prevents the AWS Load Balancer Controller from modifying or deleting arbitrary load balancers/target groups. It can only modify/delete ELB resources that are tagged as Kubernetes-managed resources with:
+
+```text
+elbv2.k8s.aws/cluster
+```
+
+So this block says: “You may modify/delete load balancer resources, but only ones that have the Kubernetes ELB cluster tag.”
+
+---
