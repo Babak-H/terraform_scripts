@@ -6003,3 +6003,18 @@ elbv2.k8s.aws/cluster
 So this block says: “You may modify/delete load balancer resources, but only ones that have the Kubernetes ELB cluster tag.”
 
 ---
+
+S3 Public ACL vs Public Policy
+
+Now I'll build a rich interactive visualization covering all four concepts: Public ACL blocking/unblocking, Public Policy blocking/unblocking, Server-Side Encryption (SSE), and In-Transit encryption (TLS).Here's a breakdown of each tab:
+
+**Public ACL blocking** — there are two independent settings. `BlockPublicAcls` acts at write time: it rejects any PUT that tries to attach a public ACL before the object is even stored. `IgnorePublicAcls` acts at read time: even if a public ACL already exists on an object, S3 pretends it isn't there. You can toggle each one and switch scenarios (PUT with public ACL, GET with existing public ACL, PUT with private ACL) to see exactly which setting fires and why.
+
+**Public policy blocking** — again two separate settings. `BlockPublicPolicy` guards the control plane: it rejects `PutBucketPolicy` calls whose policy body would grant public access. `RestrictPublicBuckets` guards the data plane: even if a public policy is already in place, it limits access to the owning AWS account and AWS services only.
+
+**Server-side encryption** — three modes worth knowing:
+- SSE-S3: AWS manages everything, zero visibility to you
+- SSE-KMS: S3 calls KMS per-object, giving you key control, rotation, and a CloudTrail audit trail per object operation — the right choice for compliance workloads
+- SSE-C: you supply the key on every request, AWS never stores it, and if you lose it the data is gone permanently
+
+**In-transit encryption** — the mechanism is a bucket policy Deny with `aws:SecureTransport: false`. Toggle the enforcement on/off and switch between HTTP/HTTPS to see when the 403 fires.
