@@ -536,6 +536,221 @@ A VPC is the regional network container. Subnets are AZ-specific placement and r
 
 ---
 
+## AWS PrivateLink
+
+**AWS PrivateLink** provides private connectivity between VPCs, AWS services, and supported third-party services without sending traffic over the public internet. It lets a service consumer reach a specific service through private IP addresses in the consumer VPC, without needing full network-level connectivity such as VPC peering, Transit Gateway, VPN, or Direct Connect routing between the two networks.
+
+PrivateLink is important because it changes the connectivity model from "connect these networks" to "connect to this service." The consumer does not need routes to the provider VPC CIDR, and the provider does not need routes back to the consumer VPC CIDR. This reduces blast radius and avoids many CIDR overlap problems.
+
+Common uses:
+
+* Private access from private subnets to AWS services such as Secrets Manager, STS, ECR, CloudWatch Logs, KMS, SSM, and many others.
+* Private access to a SaaS or third-party service.
+* Cross-account internal platform services.
+* Exposing one service to many consumer VPCs without VPC peering mesh complexity.
+* Security inspection through Gateway Load Balancer endpoints.
+
+### Core concepts
+
+PrivateLink usually involves a **service provider** and a **service consumer**.
+
+The **service provider** owns and operates the service. For custom endpoint services, the provider normally puts the service behind a Network Load Balancer or Gateway Load Balancer and creates a VPC endpoint service.
+
+The **service consumer** creates a VPC endpoint in their VPC. The endpoint creates private connectivity to the provider service. Applications in the consumer VPC connect to the endpoint using DNS and private IP addresses.
+
+Important PrivateLink objects:
+
+* **Interface endpoint**: creates endpoint network interfaces in selected subnets. Applications connect to those private IPs, usually through DNS.
+* **Endpoint service**: the provider-side service that consumers connect to.
+* **Gateway Load Balancer endpoint**: used for traffic inspection appliances and route-table based insertion.
+* **Resource endpoint**: private access to a shared resource such as a database, EC2 instance, application endpoint, domain-name target, or IP address.
+* **Service network endpoint**: private access to a VPC Lattice service network that can contain multiple services or resources.
+* **Private DNS**: lets consumers use a friendly or normal service DNS name while traffic resolves to endpoint ENI private IPs.
+* **Endpoint policy**: optional policy on some endpoints that limits which actions or resources can be accessed through the endpoint.
+
+Gateway endpoints for S3 and DynamoDB are related VPC endpoint features, but they do **not** use PrivateLink.
+
+### Interface endpoint
+
+An **interface VPC endpoint** is the most common PrivateLink pattern. It creates one or more endpoint network interfaces in subnets that you choose. Each endpoint ENI gets a private IP address from the subnet. Resources in the VPC connect to the service through those private IPs.
+
+Interface endpoints are commonly used when private workloads need AWS APIs without NAT gateway or internet access. For example, a private ECS task pulling an image from ECR may need interface endpoints for ECR API, ECR Docker, CloudWatch Logs, STS, Secrets Manager, and KMS, plus an S3 gateway endpoint depending on the image pull path.
+
+Security group pattern:
+
+* Application security group allows outbound HTTPS to the endpoint security group.
+* Endpoint security group allows inbound TCP `443` from the application security group.
+* Endpoint policy and IAM permissions both allow the required API calls.
+
+Private DNS is often enabled for AWS service endpoints. With private DNS enabled, applications can keep using the normal public AWS service hostname, but DNS inside the VPC resolves it to private endpoint addresses. VPC DNS support and DNS hostnames must be enabled for this to work cleanly.
+
+### Endpoint service
+
+An **endpoint service** is how you expose your own service through PrivateLink. The service provider creates an endpoint service backed by a Network Load Balancer or Gateway Load Balancer. Consumers then create interface endpoints or Gateway Load Balancer endpoints to connect to it.
+
+Provider-side concerns:
+
+* Put the service behind an NLB for normal TCP/TLS service access.
+* Put inspection appliances behind a Gateway Load Balancer for inspection patterns.
+* Use multiple Availability Zones for high availability.
+* Decide whether endpoint connection requests are accepted automatically or manually.
+* Grant allowed principals access to create endpoint connections.
+* Configure private DNS if consumers should use a friendly service name.
+* Monitor load balancer health, endpoint connections, bytes processed, and target health.
+* Understand source IP behavior. With an endpoint service behind an NLB, the application usually sees the private IP addresses of the load balancer nodes. If the provider needs consumer source details, proxy protocol can be used when the application supports it.
+
+Consumer-side concerns:
+
+* Create the endpoint in subnets that match where clients run.
+* Attach a security group that allows the required traffic.
+* Enable private DNS when appropriate.
+* Confirm the endpoint connection is accepted by the provider.
+* Update applications, DNS, or route tables depending on endpoint type.
+
+### PrivateLink vs VPC peering
+
+PrivateLink and VPC peering solve different problems.
+
+Use **PrivateLink** when consumers need access to one specific service and should not get broad network access to the provider VPC. PrivateLink can work even when consumer and provider CIDR ranges overlap because it does not route between VPC CIDR blocks.
+
+Use **VPC peering** when two VPCs need direct private IP connectivity across many resources. Peering requires route table updates, non-overlapping CIDRs, and security controls on both sides. Peering is also not transitive.
+
+Simple comparison:
+
+* PrivateLink: service-level access, no broad routing, good for SaaS and shared services.
+* VPC peering: network-level access, route-table based, good for direct VPC-to-VPC communication.
+* Transit Gateway: many-network hub-and-spoke routing, useful when many VPCs and networks need controlled routing.
+
+### DNS behavior
+
+DNS is one of the most important PrivateLink details.
+
+For AWS service interface endpoints, enabling private DNS means normal service hostnames resolve to endpoint private IPs inside the VPC. For example, an application may keep calling the usual Secrets Manager endpoint, while VPC DNS returns private IPs for the interface endpoint.
+
+For custom endpoint services, private DNS requires domain ownership verification. The provider proves control of the domain, and consumers can then use the private DNS name after creating the endpoint. Without private DNS, consumers usually use the endpoint-specific DNS names created for the VPC endpoint.
+
+Common DNS issues:
+
+* VPC DNS support or DNS hostnames are disabled.
+* Private DNS is not enabled on the endpoint.
+* A custom DNS resolver or forwarder does not forward the name correctly.
+* A private hosted zone conflicts with the expected endpoint DNS name.
+* The provider has not completed private DNS domain verification.
+
+### Security and access control
+
+PrivateLink is private networking, but it is not a replacement for IAM, security groups, or application authentication.
+
+Important controls:
+
+* **IAM permissions** decide whether the principal can call the AWS API.
+* **Endpoint policy** can restrict which actions and resources are reachable through supported endpoints.
+* **Security groups** control traffic to interface endpoint ENIs.
+* **Endpoint service allowed principals** control who can create endpoint connections to a provider service.
+* **Connection acceptance** controls whether a provider must approve consumer endpoint requests.
+* **Application auth** still matters for custom services.
+
+For AWS service endpoints, both IAM permissions and endpoint policies can affect access. A common troubleshooting mistake is fixing IAM but forgetting that the endpoint policy still blocks the request.
+
+For provider services, be careful with auto-accept and broad allowed principals. If a provider grants everyone permission and accepts all endpoint requests automatically, the service can become reachable to unintended consumers even though it has no public IP address.
+
+### Gateway Load Balancer endpoint
+
+A **Gateway Load Balancer endpoint** is a PrivateLink endpoint type used to insert security appliances into a traffic path. Instead of applications connecting through DNS like an interface endpoint, route tables send traffic to the Gateway Load Balancer endpoint.
+
+Common uses:
+
+* Firewall appliances
+* Intrusion detection or prevention
+* Packet inspection
+* Centralized security tooling
+
+The route table is the key operational piece. If traffic is supposed to be inspected but the route table does not send it to the Gateway Load Balancer endpoint, the appliance path is bypassed.
+
+### Monitoring and troubleshooting
+
+Troubleshooting PrivateLink usually means checking DNS, endpoint state, security groups, endpoint policy, IAM, and provider health.
+
+Useful checklist:
+
+* Is the VPC endpoint in `available` state?
+* Is the endpoint connection accepted by the provider?
+* Are endpoint ENIs created in the expected subnets and AZs?
+* Does DNS resolve to private endpoint IP addresses?
+* Does the endpoint security group allow inbound traffic from the clients?
+* Do client security groups and NACLs allow outbound and return traffic?
+* Does the endpoint policy allow the required action and resource?
+* Does IAM allow the caller to perform the action?
+* Is the provider NLB or Gateway Load Balancer healthy?
+* Are provider target groups healthy in every expected AZ?
+* Are VPC Flow Logs showing accepted or rejected traffic?
+
+For AWS service endpoints, CloudTrail can confirm whether API calls are reaching the service and which principal is making them. For custom services, provider-side load balancer metrics, target logs, and VPC Flow Logs are usually needed.
+
+### Terraform notes for PrivateLink
+
+Common Terraform resources include:
+
+* `aws_vpc_endpoint`
+* `aws_vpc_endpoint_policy`
+* `aws_vpc_endpoint_security_group_association`
+* `aws_vpc_endpoint_subnet_association`
+* `aws_vpc_endpoint_service`
+* `aws_vpc_endpoint_service_allowed_principal`
+* `aws_vpc_endpoint_connection_accepter`
+* `aws_lb` with `load_balancer_type = "network"` or `gateway`
+* `aws_lb_target_group`
+* `aws_lb_listener`
+* `aws_route53_record`
+
+Consumer-side interface endpoint example:
+
+```hcl
+resource "aws_vpc_endpoint" "secretsmanager" {
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = var.private_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoint.id]
+  private_dns_enabled = true
+}
+```
+
+Provider-side endpoint service example:
+
+```hcl
+resource "aws_vpc_endpoint_service" "api" {
+  acceptance_required        = true
+  network_load_balancer_arns = [aws_lb.api_nlb.arn]
+
+  tags = {
+    Name = "api-endpoint-service"
+  }
+}
+
+resource "aws_vpc_endpoint_service_allowed_principal" "consumer" {
+  vpc_endpoint_service_id = aws_vpc_endpoint_service.api.id
+  principal_arn           = "arn:aws:iam::123456789012:root"
+}
+```
+
+### Common mistakes
+
+* Confusing gateway endpoints for S3/DynamoDB with PrivateLink.
+* Creating the endpoint but forgetting the endpoint security group.
+* Enabling private DNS without VPC DNS support and hostnames.
+* Forgetting endpoint policies can deny requests even when IAM allows them.
+* Assuming PrivateLink gives full network access between VPCs.
+* Forgetting that the provider must accept endpoint connection requests when acceptance is required.
+* Putting endpoints in too few AZs, creating an availability dependency.
+* Missing NLB target health on the provider side.
+* Using PrivateLink when Transit Gateway or VPC peering is actually needed for broad network routing.
+* Forgetting that interface endpoints have hourly and data processing costs.
+
+PrivateLink gives private service-level connectivity without broad VPC routing. Consumers connect through interface endpoints or Gateway Load Balancer endpoints. Providers expose endpoint services through NLBs or Gateway Load Balancers. Most PrivateLink problems are DNS, security groups, endpoint policies, IAM, provider acceptance, or unhealthy provider targets.
+
+---
+
 ## Subnet
 
 A **subnet** is a smaller IP range inside a VPC. Every subnet belongs to exactly one Availability Zone. This is a very important AWS networking concept: a VPC spans multiple AZs, but a subnet does not. If you want high availability across two AZs, you need at least two subnets, one in each AZ.
