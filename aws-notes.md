@@ -969,6 +969,169 @@ An ALB receives traffic through **listeners** and forwards it to **target groups
 
 ---
 
+## NLB Load Balancer
+
+A **Network Load Balancer**, or **NLB**, is an AWS Layer 4 load balancer for high-performance TCP, UDP, TCP_UDP, and TLS traffic. Layer 4 means it routes connections based mainly on network and transport details such as IP address, port, and protocol. It does not understand HTTP paths, host headers, cookies, or application routing rules the way an ALB does.
+
+Use an NLB when you need very low latency, high connection scale, static IP addresses, source IP preservation, TCP/UDP forwarding, TLS pass-through or TLS termination at the load balancer, or AWS PrivateLink endpoint services. Common examples include APIs that need fixed allowlisted IPs, gRPC or raw TCP services, game servers, VPN-like services, internal platform services, and Kubernetes `Service` objects of type `LoadBalancer`.
+
+An NLB can be **internet-facing** or **internal**. An internet-facing NLB is placed in public subnets and can expose one static IP address per enabled Availability Zone. You can also assign Elastic IPs to internet-facing NLB subnet mappings. An internal NLB is placed in private subnets and exposes private IP addresses for service-to-service or hybrid network traffic.
+
+### NLB vs ALB
+
+Choose the load balancer based on the layer where you need control:
+
+* **ALB**: best for HTTP/HTTPS applications that need host-based routing, path-based routing, redirects, authentication, WAF integration, and rich HTTP metrics.
+* **NLB**: best for TCP, UDP, TLS, static IPs, source IP preservation, PrivateLink, and very high-throughput connection forwarding.
+
+If you need both, an NLB can target an ALB. This pattern is useful when you need NLB features such as static IPs or PrivateLink while still using ALB Layer 7 routing after traffic reaches the application layer.
+
+### Listener
+
+An NLB listener checks for incoming connections on a protocol and port, such as:
+
+* TCP on port 80 or 443
+* TLS on port 443
+* UDP on a service port
+* TCP_UDP when the same port needs both TCP and UDP
+
+For a **TCP listener**, the NLB passes TCP traffic through to the target group. For a **TLS listener**, the NLB can terminate TLS using an ACM certificate and then forward traffic to targets. If the application must terminate TLS itself, use TCP pass-through and let the backend handle certificates.
+
+NLB listener rules are simpler than ALB listener rules. An NLB listener usually forwards to a target group. It does not do path-based or host-based routing.
+
+### Target group
+
+An NLB target group defines where traffic goes after the listener receives it.
+
+Target types include:
+
+* **Instance**: targets are EC2 instance IDs.
+* **IP**: targets are IP addresses, commonly used for ECS tasks, EKS pods, on-premises services reachable over private connectivity, or appliances.
+* **ALB**: target is an Application Load Balancer.
+
+NLB health checks can use TCP, HTTP, or HTTPS depending on the target type and design. TCP health checks only confirm that a connection can be opened. HTTP and HTTPS health checks are usually better when the service has an application-level health endpoint.
+
+For UDP services, health checks still use TCP, HTTP, or HTTPS. A common pattern is to run a small TCP or HTTP health endpoint that reflects whether the UDP service is actually healthy.
+
+### Static IPs and DNS behavior
+
+An NLB provides a DNS name, but it can also provide stable IP behavior:
+
+* One IP address is exposed per enabled Availability Zone.
+* Internet-facing NLBs can use Elastic IPs through subnet mappings.
+* Route 53 alias records can point a friendly DNS name to the NLB.
+
+Static IPs are useful when clients or partners need to allowlist fixed addresses. For most normal web applications, DNS should still be the main integration point.
+
+When cross-zone load balancing is disabled, each NLB node sends traffic mainly to targets in its own Availability Zone. Make sure every enabled AZ has enough healthy target capacity. When cross-zone load balancing is enabled, traffic can be distributed across targets in multiple AZs, but inter-AZ data transfer and capacity planning should be considered.
+
+### Security groups and NLB traffic
+
+Modern NLBs can have security groups. A useful secure pattern is:
+
+* NLB security group allows inbound traffic only from trusted client CIDRs on the listener port.
+* Target security group allows inbound traffic from the NLB security group on the target port and health check port.
+* Targets do not allow direct client access unless there is a separate operational reason.
+
+Important gotcha: if an NLB is created without any security groups, security groups cannot be added to that NLB later. For new Terraform-managed NLBs, it is usually safer to attach a security group at creation time even if the initial rules are simple.
+
+If client IP preservation is enabled or used by the target type, backend logs and security rules may see the original client IP rather than only a load balancer IP. This is useful for auditing, but it means target security group and NACL rules must be designed carefully.
+
+### PrivateLink
+
+NLBs are commonly used with **AWS PrivateLink**. In a PrivateLink design, a service provider exposes an endpoint service backed by an NLB, and service consumers create interface VPC endpoints to reach that service privately.
+
+PrivateLink is useful when consumers need private access to one service but should not have full network routing into the provider VPC. It is often cleaner than VPC peering for SaaS, shared platform services, and cross-account service exposure.
+
+### Monitoring and SRE concerns
+
+Important NLB CloudWatch metrics include:
+
+* `ActiveFlowCount`
+* `NewFlowCount`
+* `ProcessedBytes`
+* `TCP_Client_Reset_Count`
+* `TCP_Target_Reset_Count`
+* `TCP_ELB_Reset_Count`
+* `HealthyHostCount`
+* `UnHealthyHostCount`
+
+Enable NLB access logs to S3 when you need connection-level visibility. For deeper network troubleshooting, combine NLB metrics with target logs, VPC Flow Logs, security group rules, NACLs, and application metrics.
+
+Useful troubleshooting questions:
+
+* Is the listener using the expected protocol and port?
+* Is the target group using the correct target type?
+* Are targets healthy in every enabled AZ?
+* Is the health check protocol too shallow, such as TCP passing while the application is broken?
+* Do security groups and NACLs allow listener, target, health check, and return traffic?
+* Is cross-zone load balancing behavior matching the capacity model?
+* Are clients using the NLB DNS name or stale allowlisted IPs?
+
+### Terraform notes for NLBs
+
+Common Terraform resources include:
+
+* `aws_lb` with `load_balancer_type = "network"`
+* `aws_lb_listener`
+* `aws_lb_target_group`
+* `aws_lb_target_group_attachment`
+* `aws_security_group`
+* `aws_route53_record`
+* `aws_vpc_endpoint_service`, when exposing a PrivateLink service
+
+Example shape:
+
+```hcl
+resource "aws_lb" "app_nlb" {
+  name               = "app-nlb"
+  internal           = false
+  load_balancer_type = "network"
+  subnets            = var.public_subnet_ids
+  security_groups    = [aws_security_group.nlb.id]
+}
+
+resource "aws_lb_target_group" "app" {
+  name        = "app-tg"
+  port        = 8080
+  protocol    = "TCP"
+  target_type = "instance"
+  vpc_id      = var.vpc_id
+
+  health_check {
+    protocol = "HTTP"
+    path     = "/health"
+    port     = "traffic-port"
+  }
+}
+
+resource "aws_lb_listener" "tcp" {
+  load_balancer_arn = aws_lb.app_nlb.arn
+  port              = 443
+  protocol          = "TCP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app.arn
+  }
+}
+```
+
+### Common mistakes
+
+* Choosing NLB for HTTP path or host routing when ALB is the better fit.
+* Using TCP health checks when the port is open but the application is unhealthy.
+* Creating an NLB without security groups and later needing NLB-level filtering.
+* Enabling AZs on the NLB where there are no healthy targets or not enough capacity.
+* Forgetting that UDP services still need a non-UDP health check.
+* Expecting NLB to rewrite HTTP headers or add `X-Forwarded-For` like an ALB.
+* Hardcoding NLB IPs in clients when DNS or Route 53 alias records would be easier to operate.
+* Missing target security group or NACL rules for health checks.
+
+An NLB is a high-performance Layer 4 load balancer. It is best for TCP, UDP, TLS, static IPs, source IP preservation, and PrivateLink. It uses listeners and target groups like an ALB, but it does not provide Layer 7 HTTP routing. Most NLB issues come from health checks, target registration, security groups, NACLs, AZ capacity, cross-zone assumptions, or choosing NLB when ALB features are actually required.
+
+---
+
 ## EC2 Instance
 
 An **EC2 instance** is a virtual machine in AWS. You choose an AMI, instance type, networking, storage, IAM role, and user data. EC2 is still one of the most important services because many workloads, Kubernetes nodes, legacy applications, agents, CI runners, and databases run on virtual machines.
