@@ -490,6 +490,16 @@ Another important limitation: VPC CIDR ranges must not overlap. If two VPCs both
 
 Peering also does not provide centralized inspection by itself. If you need many VPCs to share routing, attach to on-premises networks, or use centralized egress and inspection patterns, Transit Gateway is usually the more scalable design.
 
+### Peering routing, security, and DNS
+
+A peering connection becoming `active` does **not** create working connectivity by itself. The requester and accepter must each add routes in the route tables used by the relevant subnets. Each route targets the peer VPC's CIDR through the peering connection. Only add routes for networks that actually need to communicate; a broad route makes more of the peer reachable than intended.
+
+Security groups and NACLs still apply on both sides. For same-Region peerings, a security group can reference a security group in the peer VPC, which is often safer than allowing the peer's entire CIDR. For inter-Region peerings, use CIDR-based rules instead. Peering also cannot be used as an edge-to-edge transit path: a VPC cannot use a peer's internet gateway, NAT gateway, VPN, Direct Connect connection, or another peering connection to reach a third network.
+
+If workloads use an EC2 public DNS hostname to reach an instance in the peer VPC, enable the peering connection's DNS-resolution option on the appropriate side. With that option and VPC DNS support enabled, that hostname resolves to the instance's private IP for traffic across the peer. For application names, private hosted zones or Route 53 Resolver are usually a clearer long-term DNS design.
+
+Useful Terraform resources include `aws_vpc_peering_connection`, `aws_vpc_peering_connection_accepter` for cross-account acceptance, `aws_route`, and `aws_vpc_peering_connection_options` for DNS-resolution settings. Model routes on both sides explicitly; Terraform does not infer them from the peering connection.
+
 ### Terraform notes for VPCs
 
 In Terraform, a VPC design often includes resources like:
@@ -583,6 +593,8 @@ Security group pattern:
 * Endpoint policy and IAM permissions both allow the required API calls.
 
 Private DNS is often enabled for AWS service endpoints. With private DNS enabled, applications can keep using the normal public AWS service hostname, but DNS inside the VPC resolves it to private endpoint addresses. VPC DNS support and DNS hostnames must be enabled for this to work cleanly.
+
+Choose one subnet per Availability Zone for an interface endpoint. AWS creates one endpoint ENI per chosen subnet, and each ENI consumes a private IP address. For production, place endpoint ENIs in at least two AZs and have applications use the Regional DNS name (or the normal AWS service hostname with private DNS enabled). This avoids making service access depend on a single endpoint ENI or AZ. Interface endpoints are billed per endpoint-AZ hour and per GB processed, so create only the endpoints and AZ coverage the workload needs.
 
 ### Endpoint service
 
@@ -5140,6 +5152,18 @@ A **hosted zone** is a container for DNS records for a domain, such as `example.
 * **Private hosted zone**: answers DNS queries only inside associated VPCs.
 
 A hosted zone contains records such as A, AAAA, CNAME, MX, TXT, NS, SOA, and Route 53 alias records.
+
+### Private hosted zones
+
+A **Route 53 private hosted zone** supplies internal DNS for a domain and its subdomains, such as `internal.example.com` or `example.com`. Route 53 answers from the zone only for clients that use the VPC Resolver in a VPC associated with that zone. The NS records displayed in the zone do not make the zone publicly authoritative, and the zone cannot be queried from the public internet.
+
+Associate the zone with every VPC that needs to resolve its records; the VPCs can belong to different accounts when the required cross-account association authorization is used. `enableDnsSupport` and `enableDnsHostnames` must be enabled on associated VPCs. This makes private hosted zones useful for shared internal service names, databases, interface endpoints, and split-horizon DNS.
+
+Split-horizon DNS means a public and a private hosted zone can use the same name, such as `example.com`. Clients in an associated VPC receive the private answer, while internet clients receive the public answer. Be deliberate with overlapping private zones: Route 53 chooses the most-specific matching zone. More importantly, if a matching private zone has no record of the requested name and type, VPC Resolver returns `NXDOMAIN`; it does not fall back to the public zone. A Resolver forwarding rule for the same domain also takes precedence over the private hosted zone.
+
+For hybrid DNS, on-premises resolvers can query a Route 53 Resolver inbound endpoint, but the private hosted zone must be associated with the endpoint's VPC. If instances use custom DNS servers, configure those servers to forward the private domain to the Amazon-provided resolver or to the appropriate Resolver endpoint.
+
+Useful Terraform resources are `aws_route53_zone` with `vpc` configuration, `aws_route53_zone_association`, and `aws_route53_record`. Cross-account zone association also needs an authorization workflow, such as `aws_route53_vpc_association_authorization`, before the other account associates its VPC.
 
 ### Record
 
